@@ -1,0 +1,27 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1788779015220,
+      "tag": "0000_redundant_deadpool",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1788779054899,
+      "tag": "0001_perpetual_whiplash",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1788780384598,
+      "tag": "0002_tiresome_ozymandias",
+      "breakpoints": true
+    }
+  ]
+}

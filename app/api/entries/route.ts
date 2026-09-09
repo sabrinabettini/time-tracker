@@ -1,4 +1,4 @@
-import { addManualTimeEntry, deleteTimeEntry, listTimeEntries, startTimeEntry, stopTimeEntry } from '@/db/time-entries';
+import { addManualTimeEntry, deleteTimeEntry, importTimeEntries, listTimeEntries, startTimeEntry, stopTimeEntry } from '@/db/time-entries';
 
 export async function GET() {
   try {
@@ -44,6 +44,19 @@ export async function POST(request: Request) {
           notes: String(body.notes ?? '').trim(),
         }),
       }, { status: 201 });
+    }
+    if (body.action === 'import') {
+      if (!Array.isArray(body.entries)) return Response.json({ error: 'A list of entries is required.' }, { status: 400 });
+      const entries = body.entries.map((entry) => {
+        const value = entry as Record<string, unknown>;
+        return {
+          task: String(value.task ?? '').trim(), client: String(value.client ?? '').trim(),
+          hourlyRateCents: Math.round(Number(value.hourlyRate ?? 0) * 100),
+          startedAt: String(value.startedAt ?? ''), endedAt: String(value.endedAt ?? ''),
+          commitUrl: String(value.commitUrl ?? '').trim(), screenshotUrl: String(value.screenshotUrl ?? '').trim(), notes: String(value.notes ?? '').trim(),
+        };
+      });
+      return Response.json({ entries: await importTimeEntries(entries) }, { status: 201 });
     }
     return Response.json({ error: 'Unknown action.' }, { status: 400 });
   } catch (error) {

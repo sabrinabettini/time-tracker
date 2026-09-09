@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowUpRight,
   BarChart3,
@@ -13,6 +13,7 @@ import {
   Download,
   ExternalLink,
   FileImage,
+  FileUp,
   GitCommitHorizontal,
   LayoutDashboard,
   Play,
@@ -82,6 +83,31 @@ function localDateValue(date = new Date()) {
   return new Date(date.getTime() - offset).toISOString().slice(0, 10);
 }
 
+function parseCsv(text: string) {
+  const rows: string[][] = [];
+  let row: string[] = []; let cell = ''; let quoted = false;
+  for (let index = 0; index < text.length; index += 1) {
+    const character = text[index];
+    if (character === '"') {
+      if (quoted && text[index + 1] === '"') { cell += '"'; index += 1; } else quoted = !quoted;
+    } else if (character === ',' && !quoted) { row.push(cell); cell = ''; }
+    else if ((character === '\n' || character === '\r') && !quoted) {
+      if (character === '\r' && text[index + 1] === '\n') index += 1;
+      row.push(cell); if (row.some((value) => value.trim())) rows.push(row); row = []; cell = '';
+    } else cell += character;
+  }
+  row.push(cell); if (row.some((value) => value.trim())) rows.push(row);
+  return rows;
+}
+
+function csvDateTime(date: string, time: string, fallbackYear: number) {
+  const value = date.trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return new Date(`${value}T${time}:00`).toISOString();
+  const parsed = new Date(`${value} ${fallbackYear} ${time}`);
+  if (Number.isNaN(parsed.getTime())) throw new Error(`Could not read date “${date}”.`);
+  return parsed.toISOString();
+}
+
 export default function Home() {
   const [entries, setEntries] = useState<Entry[]>([]);
   const [task, setTask] = useState('');
@@ -108,6 +134,8 @@ export default function Home() {
   const [reportWeekStart, setReportWeekStart] = useState(() => getMonday());
   const [settings, setSettings] = useState<SettingsData>({ displayName: 'Sabrina', initials: 'SB', defaultRateCents: 15000, currency: 'AUD', timezone: 'Australia/Sydney', weekStartsOn: 1 });
   const [settingsSaved, setSettingsSaved] = useState(false);
+  const [importMessage, setImportMessage] = useState('');
+  const importInput = useRef<HTMLInputElement>(null);
 
   const running = entries.find((entry) => entry.status === 'running');
 
@@ -263,14 +291,41 @@ export default function Home() {
   }
 
   function exportReport(records: Entry[] = completed, startDate: Date = weekStart) {
-    const rows = [['Task', 'Client', 'Date', 'Started', 'Ended', 'Hours', 'Rate AUD', 'Value AUD', 'Commit', 'Screenshot']];
-    records.forEach((entry) => rows.push([entry.task, entry.client, dateFormatter.format(new Date(entry.startedAt)), timeFormatter.format(new Date(entry.startedAt)), entry.endedAt ? timeFormatter.format(new Date(entry.endedAt)) : '', ((entry.durationMinutes ?? 0) / 60).toFixed(2), (entry.hourlyRateCents / 100).toFixed(2), (((entry.durationMinutes ?? 0) / 60) * (entry.hourlyRateCents / 100)).toFixed(2), entry.commitUrl ?? '', entry.screenshotUrl ?? '']));
+    const rows = [['Task', 'Client', 'Date', 'Started', 'Ended', 'Hours', 'Rate AUD', 'Value AUD', 'Commit', 'Screenshot', 'Notes', 'Started At ISO', 'Ended At ISO']];
+    records.forEach((entry) => rows.push([entry.task, entry.client, dateFormatter.format(new Date(entry.startedAt)), timeFormatter.format(new Date(entry.startedAt)), entry.endedAt ? timeFormatter.format(new Date(entry.endedAt)) : '', ((entry.durationMinutes ?? 0) / 60).toFixed(2), (entry.hourlyRateCents / 100).toFixed(2), (((entry.durationMinutes ?? 0) / 60) * (entry.hourlyRateCents / 100)).toFixed(2), entry.commitUrl ?? '', entry.screenshotUrl ?? '', entry.notes ?? '', entry.startedAt, entry.endedAt ?? '']));
     const csv = rows.map((row) => row.map((value) => `"${String(value).replaceAll('"', '""')}"`).join(',')).join('\n');
     const link = document.createElement('a');
     link.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
     link.download = `time-report-${startDate.toISOString().slice(0, 10)}.csv`;
     link.click();
     URL.revokeObjectURL(link.href);
+  }
+
+  async function importReport(file: File) {
+    setSaving(true); setError(''); setImportMessage('');
+    try {
+      const rows = parseCsv(await file.text());
+      if (rows.length < 2) throw new Error('This CSV does not contain any work entries.');
+      const headings = rows[0].map((heading) => heading.trim().toLowerCase());
+      const column = (name: string) => headings.indexOf(name.toLowerCase());
+      const required = ['task', 'client', 'date', 'started', 'ended', 'rate aud'];
+      if (required.some((name) => column(name) < 0)) throw new Error('Choose a CSV exported by Time Tracker.');
+      const weekMatch = file.name.match(/time-report-(\d{4})-\d{2}-\d{2}/);
+      const fallbackYear = weekMatch ? Number(weekMatch[1]) : new Date().getFullYear();
+      const imported = rows.slice(1).map((row) => {
+        const value = (name: string) => row[column(name)]?.trim() ?? '';
+        const startedAt = value('started at iso') || csvDateTime(value('date'), value('started'), fallbackYear);
+        const endedAt = value('ended at iso') || csvDateTime(value('date'), value('ended'), fallbackYear);
+        return { task: value('task'), client: value('client'), hourlyRate: Number(value('rate aud')), startedAt, endedAt, commitUrl: value('commit'), screenshotUrl: value('screenshot'), notes: value('notes') };
+      });
+      const response = await fetch('/api/entries', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'import', entries: imported }) });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error);
+      setEntries((current) => [...data.entries, ...current]);
+      const importedWeek = new Date(imported[0].startedAt); setReportWeekStart(getMonday(importedWeek)); setActiveView('report');
+      setImportMessage(`${data.entries.length} ${data.entries.length === 1 ? 'entry' : 'entries'} imported.`);
+    } catch (reason) { setError(reason instanceof Error ? reason.message : 'Unable to import this CSV.'); }
+    finally { setSaving(false); if (importInput.current) importInput.current.value = ''; }
   }
 
   function moveReportWeek(direction: number) {
@@ -306,6 +361,7 @@ export default function Home() {
 
   return (
     <main className="min-h-screen bg-[#e7e8e4] text-[#252a27]">
+      <input ref={importInput} className="sr-only" type="file" accept=".csv,text/csv" onChange={(event) => { const file = event.target.files?.[0]; if (file) void importReport(file); }} />
       <aside className="fixed inset-y-0 left-0 hidden w-[78px] flex-col items-center border-r border-[#ced1cc] bg-[#d9dcd7] py-6 md:flex">
         <div className="grid size-10 place-items-center rounded-[15px] bg-[#28332e] text-sm font-black text-[#d8c0b5]">TT</div>
         <nav className="mt-12 flex flex-col gap-3" aria-label="Primary navigation">
@@ -334,7 +390,7 @@ export default function Home() {
           {activeView === 'dashboard' && <>
           <div className="mb-7 flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
             <div><p className="kicker">Today · {dateFormatter.format(new Date())}</p><h1 className="mt-1 text-3xl font-bold tracking-[-.05em] md:text-[2.6rem]">Track the work. Prove the value.</h1></div>
-            <div className="flex flex-wrap gap-2"><Button variant="outline" className="h-10 rounded-xl border-[#bec3bd] bg-[#f6f6f3] px-4" onClick={() => setManualOpen(true)}><Plus /> Add past work</Button><Button variant="outline" className="h-10 rounded-xl border-[#bec3bd] bg-[#f6f6f3] px-4" onClick={() => exportReport()}><Download /> Export week</Button></div>
+            <div className="flex flex-wrap gap-2"><Button variant="outline" className="h-10 rounded-xl border-[#bec3bd] bg-[#f6f6f3] px-4" onClick={() => setManualOpen(true)}><Plus /> Add past work</Button><Button variant="outline" className="h-10 rounded-xl border-[#bec3bd] bg-[#f6f6f3] px-4" onClick={() => importInput.current?.click()} disabled={saving}><FileUp /> Import week</Button><Button variant="outline" className="h-10 rounded-xl border-[#bec3bd] bg-[#f6f6f3] px-4" onClick={() => exportReport()}><Download /> Export week</Button></div>
           </div>
 
           <section className="grid gap-5 xl:grid-cols-[1.35fr_.65fr]">
@@ -392,7 +448,7 @@ export default function Home() {
               <div className="page-heading"><div><p className="kicker">Weekly report</p><h1>Time, value and evidence.</h1><p>Review any week and export a client-ready work log.</p></div><Button onClick={() => { const current = getMonday(); setReportWeekStart(current); }} variant="outline" className="h-10 rounded-xl bg-[#f5f5f2]">This week</Button></div>
               <div className="week-switcher"><button onClick={() => moveReportWeek(-1)} aria-label="Previous week"><ChevronLeft /></button><div><strong>{dateFormatter.format(reportWeekStart)} – {dateFormatter.format(new Date(reportWeekEnd.getTime() - 86400000))}</strong><span>{reportEntries.length} completed {reportEntries.length === 1 ? 'entry' : 'entries'}</span></div><button onClick={() => moveReportWeek(1)} disabled={reportWeekStart >= getMonday()} aria-label="Next week"><ChevronRight /></button></div>
               <div className="metric-grid"><div className="metric-card dark"><span>Hours worked</span><strong>{formatDuration(reportMinutes)}</strong></div><div className="metric-card"><span>Billable value</span><strong>{moneyFormatter.format(reportValue)}</strong></div><div className="metric-card"><span>Clients</span><strong>{new Set(reportEntries.map((entry) => entry.client)).size}</strong></div></div>
-              <div className="data-panel mt-5"><div className="panel-heading"><div><p className="kicker">Work log</p><h2>Entries for this week</h2></div><Button variant="outline" className="rounded-xl" onClick={() => exportReport(reportEntries, reportWeekStart)}><Download /> Export CSV</Button></div>{reportEntries.length === 0 ? <div className="empty-panel"><BarChart3 /><strong>No work recorded for this week</strong><span>Use the timer or add past work from the Dashboard.</span></div> : <div className="table-wrap"><table><thead><tr><th>Date</th><th>Task</th><th>Client</th><th>Time</th><th>Rate</th><th>Value</th><th>Evidence</th></tr></thead><tbody>{reportEntries.map((entry) => <tr key={entry.id}><td>{dateFormatter.format(new Date(entry.startedAt))}</td><td><strong>{entry.task}</strong></td><td>{entry.client}</td><td>{formatDuration(entry.durationMinutes ?? 0)}</td><td>{moneyFormatter.format(entry.hourlyRateCents / 100)}</td><td>{moneyFormatter.format(((entry.durationMinutes ?? 0) / 60) * (entry.hourlyRateCents / 100))}</td><td><div className="flex gap-2">{entry.commitUrl && <a aria-label="Open commit" className="evidence-link" href={entry.commitUrl} target="_blank" rel="noreferrer"><GitCommitHorizontal /></a>}{entry.screenshotUrl && <a aria-label="Open screenshot" className="evidence-link" href={entry.screenshotUrl} target="_blank" rel="noreferrer"><FileImage /></a>}</div></td></tr>)}</tbody></table></div>}</div>
+              <div className="data-panel mt-5"><div className="panel-heading"><div><p className="kicker">Work log</p><h2>Entries for this week</h2></div><div className="flex gap-2"><Button variant="outline" className="rounded-xl" onClick={() => importInput.current?.click()} disabled={saving}><FileUp /> Import CSV</Button><Button variant="outline" className="rounded-xl" onClick={() => exportReport(reportEntries, reportWeekStart)}><Download /> Export CSV</Button></div></div>{importMessage && <p className="mx-6 mt-4 rounded-xl bg-[#e4eee7] px-4 py-3 text-sm font-semibold text-[#3d604a]">{importMessage}</p>}{reportEntries.length === 0 ? <div className="empty-panel"><BarChart3 /><strong>No work recorded for this week</strong><span>Use the timer or import an exported work week.</span></div> : <div className="table-wrap"><table><thead><tr><th>Date</th><th>Task</th><th>Client</th><th>Time</th><th>Rate</th><th>Value</th><th>Evidence</th></tr></thead><tbody>{reportEntries.map((entry) => <tr key={entry.id}><td>{dateFormatter.format(new Date(entry.startedAt))}</td><td><strong>{entry.task}</strong></td><td>{entry.client}</td><td>{formatDuration(entry.durationMinutes ?? 0)}</td><td>{moneyFormatter.format(entry.hourlyRateCents / 100)}</td><td>{moneyFormatter.format(((entry.durationMinutes ?? 0) / 60) * (entry.hourlyRateCents / 100))}</td><td><div className="flex gap-2">{entry.commitUrl && <a aria-label="Open commit" className="evidence-link" href={entry.commitUrl} target="_blank" rel="noreferrer"><GitCommitHorizontal /></a>}{entry.screenshotUrl && <a aria-label="Open screenshot" className="evidence-link" href={entry.screenshotUrl} target="_blank" rel="noreferrer"><FileImage /></a>}</div></td></tr>)}</tbody></table></div>}</div>
             </section>
           )}
 

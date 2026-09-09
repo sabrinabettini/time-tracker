@@ -114,6 +114,38 @@ export async function addManualTimeEntry(input: {
   return mapRow(result);
 }
 
+export type ImportedTimeEntry = {
+  task: string;
+  client: string;
+  hourlyRateCents: number;
+  startedAt: string;
+  endedAt: string;
+  commitUrl: string;
+  screenshotUrl: string;
+  notes: string;
+};
+
+export async function importTimeEntries(inputs: ImportedTimeEntry[]) {
+  if (!inputs.length) throw new Error('There are no entries to import.');
+  if (inputs.length > 100) throw new Error('Import up to 100 entries at a time.');
+  await ensureTimeEntriesTable();
+  const createdAt = new Date().toISOString();
+  const statements = inputs.map((input) => {
+    const start = new Date(input.startedAt);
+    const end = new Date(input.endedAt);
+    const minutes = Math.round((end.getTime() - start.getTime()) / 60000);
+    if (!input.task || !input.client || !Number.isFinite(input.hourlyRateCents) || input.hourlyRateCents < 0) throw new Error('Each imported entry needs a task, client and valid rate.');
+    if (!Number.isFinite(minutes) || minutes < 1 || minutes > 1440) throw new Error('Each imported entry needs an end time within 24 hours of its start time.');
+    if (end.getTime() > Date.now() + 60000) throw new Error('Imported work cannot end in the future.');
+    return env.DB.prepare(
+      `INSERT INTO time_entries (task, client, hourly_rate_cents, started_at, ended_at, duration_minutes, status, commit_url, screenshot_url, notes, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, 'completed', ?, ?, ?, ?) RETURNING *`,
+    ).bind(input.task, input.client, input.hourlyRateCents, start.toISOString(), end.toISOString(), minutes, input.commitUrl || null, input.screenshotUrl || null, input.notes || null, createdAt);
+  });
+  const results = await env.DB.batch(statements);
+  return results.map((result) => mapRow(result.results[0] as Record<string, unknown>));
+}
+
 export async function deleteTimeEntry(id: number) {
   await ensureTimeEntriesTable();
   const result = await env.DB.prepare('DELETE FROM time_entries WHERE id = ? RETURNING id')

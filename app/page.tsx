@@ -12,6 +12,7 @@ import {
   Clock3,
   Download,
   ExternalLink,
+  FileDown,
   FileImage,
   FileUp,
   GitCommitHorizontal,
@@ -301,6 +302,31 @@ export default function Home() {
     URL.revokeObjectURL(link.href);
   }
 
+  function exportEvidencePdf(records: Entry[] = reportEntries, startDate: Date = reportWeekStart) {
+    if (!records.length) { setError('Add or import at least one completed entry before exporting a PDF.'); return; }
+    const printWindow = window.open('', '_blank', 'noopener,noreferrer');
+    if (!printWindow) { setError('Your browser blocked the PDF window. Allow pop-ups and try again.'); return; }
+    const document = printWindow.document;
+    document.title = `Time report ${startDate.toISOString().slice(0, 10)}`;
+    document.head.innerHTML = '<style>@page{margin:18mm}body{color:#202522;font:12px Arial,sans-serif}h1{font-size:25px;margin:0 0 5px}h2{font-size:16px;margin:0}p{color:#626b66;margin:0 0 18px}.summary{display:flex;gap:25px;border:1px solid #d7ddd8;padding:13px 15px;margin:20px 0}.summary strong{display:block;color:#202522;font-size:16px}.entry{break-inside:avoid;border-top:1px solid #d7ddd8;padding:18px 0}.meta{display:flex;justify-content:space-between;gap:18px;margin-top:6px}.notes{margin-top:10px;color:#454d48}.evidence{margin-top:13px}.evidence img{display:block;max-width:100%;max-height:130mm;border:1px solid #d7ddd8;border-radius:4px}.muted{color:#727a75;font-size:11px}@media print{.entry{page-break-inside:avoid}}</style>';
+    const body = document.body;
+    const heading = document.createElement('h1'); heading.textContent = 'Weekly time report'; body.append(heading);
+    const subtitle = document.createElement('p'); subtitle.textContent = `${dateFormatter.format(startDate)} – ${dateFormatter.format(new Date(startDate.getTime() + 6 * 86400000))} · Evidence included`; body.append(subtitle);
+    const summary = document.createElement('div'); summary.className = 'summary';
+    [['Hours worked', formatDuration(records.reduce((sum, entry) => sum + (entry.durationMinutes ?? 0), 0))], ['Billable value', moneyFormatter.format(records.reduce((sum, entry) => sum + ((entry.durationMinutes ?? 0) / 60) * (entry.hourlyRateCents / 100), 0))], ['Entries', String(records.length)]].forEach(([label, value]) => { const item = document.createElement('div'); const name = document.createElement('span'); name.textContent = label; const amount = document.createElement('strong'); amount.textContent = value; item.append(name, amount); summary.append(item); });
+    body.append(summary);
+    records.forEach((entry) => {
+      const section = document.createElement('section'); section.className = 'entry';
+      const title = document.createElement('h2'); title.textContent = entry.task; section.append(title);
+      const meta = document.createElement('div'); meta.className = 'meta'; const left = document.createElement('span'); left.textContent = `${entry.client} · ${dateFormatter.format(new Date(entry.startedAt))}`; const right = document.createElement('span'); right.textContent = `${timeFormatter.format(new Date(entry.startedAt))} – ${entry.endedAt ? timeFormatter.format(new Date(entry.endedAt)) : ''} · ${formatDuration(entry.durationMinutes ?? 0)} · ${moneyFormatter.format(((entry.durationMinutes ?? 0) / 60) * (entry.hourlyRateCents / 100))}`; meta.append(left, right); section.append(meta);
+      if (entry.notes) { const notes = document.createElement('div'); notes.className = 'notes'; notes.textContent = entry.notes; section.append(notes); }
+      if (entry.screenshotUrl) { const evidence = document.createElement('div'); evidence.className = 'evidence'; const label = document.createElement('div'); label.className = 'muted'; label.textContent = 'Screenshot evidence'; const image = document.createElement('img'); image.src = entry.screenshotUrl; image.alt = `Screenshot evidence for ${entry.task}`; image.onerror = () => { image.remove(); const unavailable = document.createElement('div'); unavailable.className = 'muted'; unavailable.textContent = `Image unavailable: ${entry.screenshotUrl}`; evidence.append(unavailable); }; evidence.append(label, image); section.append(evidence); }
+      body.append(section);
+    });
+    const images = Array.from(document.images);
+    Promise.race([Promise.all(images.map((image) => new Promise<void>((resolve) => { image.addEventListener('load', () => resolve(), { once: true }); image.addEventListener('error', () => resolve(), { once: true }); }))), new Promise((resolve) => window.setTimeout(resolve, 4000))]).then(() => { printWindow.focus(); printWindow.print(); });
+  }
+
   async function importReport(file: File) {
     setSaving(true); setError(''); setImportMessage('');
     try {
@@ -448,7 +474,7 @@ export default function Home() {
               <div className="page-heading"><div><p className="kicker">Weekly report</p><h1>Time, value and evidence.</h1><p>Review any week and export a client-ready work log.</p></div><Button onClick={() => { const current = getMonday(); setReportWeekStart(current); }} variant="outline" className="h-10 rounded-xl bg-[#f5f5f2]">This week</Button></div>
               <div className="week-switcher"><button onClick={() => moveReportWeek(-1)} aria-label="Previous week"><ChevronLeft /></button><div><strong>{dateFormatter.format(reportWeekStart)} – {dateFormatter.format(new Date(reportWeekEnd.getTime() - 86400000))}</strong><span>{reportEntries.length} completed {reportEntries.length === 1 ? 'entry' : 'entries'}</span></div><button onClick={() => moveReportWeek(1)} disabled={reportWeekStart >= getMonday()} aria-label="Next week"><ChevronRight /></button></div>
               <div className="metric-grid"><div className="metric-card dark"><span>Hours worked</span><strong>{formatDuration(reportMinutes)}</strong></div><div className="metric-card"><span>Billable value</span><strong>{moneyFormatter.format(reportValue)}</strong></div><div className="metric-card"><span>Clients</span><strong>{new Set(reportEntries.map((entry) => entry.client)).size}</strong></div></div>
-              <div className="data-panel mt-5"><div className="panel-heading"><div><p className="kicker">Work log</p><h2>Entries for this week</h2></div><div className="flex gap-2"><Button variant="outline" className="rounded-xl" onClick={() => importInput.current?.click()} disabled={saving}><FileUp /> Import CSV</Button><Button variant="outline" className="rounded-xl" onClick={() => exportReport(reportEntries, reportWeekStart)}><Download /> Export CSV</Button></div></div>{importMessage && <p className="mx-6 mt-4 rounded-xl bg-[#e4eee7] px-4 py-3 text-sm font-semibold text-[#3d604a]">{importMessage}</p>}{reportEntries.length === 0 ? <div className="empty-panel"><BarChart3 /><strong>No work recorded for this week</strong><span>Use the timer or import an exported work week.</span></div> : <div className="table-wrap"><table><thead><tr><th>Date</th><th>Task</th><th>Client</th><th>Time</th><th>Rate</th><th>Value</th><th>Evidence</th></tr></thead><tbody>{reportEntries.map((entry) => <tr key={entry.id}><td>{dateFormatter.format(new Date(entry.startedAt))}</td><td><strong>{entry.task}</strong></td><td>{entry.client}</td><td>{formatDuration(entry.durationMinutes ?? 0)}</td><td>{moneyFormatter.format(entry.hourlyRateCents / 100)}</td><td>{moneyFormatter.format(((entry.durationMinutes ?? 0) / 60) * (entry.hourlyRateCents / 100))}</td><td><div className="flex gap-2">{entry.commitUrl && <a aria-label="Open commit" className="evidence-link" href={entry.commitUrl} target="_blank" rel="noreferrer"><GitCommitHorizontal /></a>}{entry.screenshotUrl && <a aria-label="Open screenshot" className="evidence-link" href={entry.screenshotUrl} target="_blank" rel="noreferrer"><FileImage /></a>}</div></td></tr>)}</tbody></table></div>}</div>
+              <div className="data-panel mt-5"><div className="panel-heading"><div><p className="kicker">Work log</p><h2>Entries for this week</h2></div><div className="flex flex-wrap gap-2"><Button variant="outline" className="rounded-xl" onClick={() => importInput.current?.click()} disabled={saving}><FileUp /> Import CSV</Button><Button variant="outline" className="rounded-xl" onClick={() => exportEvidencePdf(reportEntries, reportWeekStart)} disabled={!reportEntries.length}><FileDown /> Export PDF</Button><Button variant="outline" className="rounded-xl" onClick={() => exportReport(reportEntries, reportWeekStart)}><Download /> Export CSV</Button></div></div>{importMessage && <p className="mx-6 mt-4 rounded-xl bg-[#e4eee7] px-4 py-3 text-sm font-semibold text-[#3d604a]">{importMessage}</p>}{reportEntries.length === 0 ? <div className="empty-panel"><BarChart3 /><strong>No work recorded for this week</strong><span>Use the timer or import an exported work week.</span></div> : <div className="table-wrap"><table><thead><tr><th>Date</th><th>Task</th><th>Client</th><th>Time</th><th>Rate</th><th>Value</th><th>Evidence</th></tr></thead><tbody>{reportEntries.map((entry) => <tr key={entry.id}><td>{dateFormatter.format(new Date(entry.startedAt))}</td><td><strong>{entry.task}</strong></td><td>{entry.client}</td><td>{formatDuration(entry.durationMinutes ?? 0)}</td><td>{moneyFormatter.format(entry.hourlyRateCents / 100)}</td><td>{moneyFormatter.format(((entry.durationMinutes ?? 0) / 60) * (entry.hourlyRateCents / 100))}</td><td><div className="flex gap-2">{entry.commitUrl && <a aria-label="Open commit" className="evidence-link" href={entry.commitUrl} target="_blank" rel="noreferrer"><GitCommitHorizontal /></a>}{entry.screenshotUrl && <a aria-label="Open screenshot" className="evidence-link" href={entry.screenshotUrl} target="_blank" rel="noreferrer"><FileImage /></a>}</div></td></tr>)}</tbody></table></div>}</div>
             </section>
           )}
 

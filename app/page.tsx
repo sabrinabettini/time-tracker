@@ -318,7 +318,7 @@ export default function Home() {
   }
 
   function exportReport(records: Entry[] = completed, startDate: Date = weekStart) {
-    const rows = [['Task', 'Client', 'Date', 'Started', 'Ended', 'Hours', 'Rate AUD', 'Value AUD', 'Commit', 'Screenshot', 'Notes', 'Started At ISO', 'Ended At ISO']];
+    const rows = [['Task', 'Client', 'Date', 'Started', 'Ended', 'Hours', 'Rate AUD', 'Value AUD', 'GitHub evidence', 'Screenshot evidence', 'What was completed?', 'Started At ISO', 'Ended At ISO']];
     records.forEach((entry) => rows.push([entry.task, entry.client, dateFormatter.format(new Date(entry.startedAt)), timeFormatter.format(new Date(entry.startedAt)), entry.endedAt ? timeFormatter.format(new Date(entry.endedAt)) : '', ((entry.durationMinutes ?? 0) / 60).toFixed(2), (entry.hourlyRateCents / 100).toFixed(2), (((entry.durationMinutes ?? 0) / 60) * (entry.hourlyRateCents / 100)).toFixed(2), entry.commitUrl ?? '', entry.screenshotUrl ?? '', entry.notes ?? '', entry.startedAt, entry.endedAt ?? '']));
     const csv = rows.map((row) => row.map((value) => `"${String(value).replaceAll('"', '""')}"`).join(',')).join('\n');
     const link = document.createElement('a');
@@ -376,7 +376,8 @@ export default function Home() {
         const value = (name: string) => row[column(name)]?.trim() ?? '';
         const startedAt = value('started at iso') || csvDateTime(value('date'), value('started'), fallbackYear);
         const endedAt = value('ended at iso') || csvDateTime(value('date'), value('ended'), fallbackYear);
-        return { task: value('task'), client: value('client'), hourlyRate: Number(value('rate aud')), startedAt, endedAt, commitUrl: value('commit'), screenshotUrl: value('screenshot'), notes: value('notes') };
+        const firstValue = (...names: string[]) => names.map(value).find(Boolean) ?? '';
+        return { task: value('task'), client: value('client'), hourlyRate: Number(value('rate aud')), startedAt, endedAt, commitUrl: firstValue('github evidence', 'commit'), screenshotUrl: firstValue('screenshot evidence', 'screenshot'), notes: firstValue('what was completed?', 'notes') };
       });
       const response = await fetch('/api/entries', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'import', entries: imported }) });
       const data = await response.json();

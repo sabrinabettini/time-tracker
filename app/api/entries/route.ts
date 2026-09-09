@@ -1,4 +1,4 @@
-import { addManualTimeEntry, deleteTimeEntry, importTimeEntries, listTimeEntries, startTimeEntry, stopTimeEntry } from '@/db/time-entries';
+import { addManualTimeEntry, deleteTimeEntry, importTimeEntries, listTimeEntries, startTimeEntry, stopTimeEntry, updateTimeEntry } from '@/db/time-entries';
 
 export async function GET() {
   try {
@@ -57,6 +57,14 @@ export async function POST(request: Request) {
         };
       });
       return Response.json({ entries: await importTimeEntries(entries) }, { status: 201 });
+    }
+    if (body.action === 'update') {
+      const id = Number(body.id);
+      const task = String(body.task ?? '').trim();
+      const client = String(body.client ?? '').trim();
+      const rate = Number(body.hourlyRate ?? 0);
+      if (!Number.isInteger(id) || !task || !client || !Number.isFinite(rate) || rate < 0) return Response.json({ error: 'Task, client and a valid rate are required.' }, { status: 400 });
+      return Response.json({ entry: await updateTimeEntry(id, { task, client, hourlyRateCents: Math.round(rate * 100), commitUrl: String(body.commitUrl ?? '').trim(), screenshotUrl: String(body.screenshotUrl ?? '').trim(), notes: String(body.notes ?? '').trim() }) });
     }
     return Response.json({ error: 'Unknown action.' }, { status: 400 });
   } catch (error) {

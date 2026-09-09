@@ -18,6 +18,7 @@ import {
   GitCommitHorizontal,
   LayoutDashboard,
   Play,
+  Pencil,
   Plus,
   ReceiptText,
   Settings,
@@ -137,6 +138,13 @@ export default function Home() {
   const [settingsSaved, setSettingsSaved] = useState(false);
   const [importMessage, setImportMessage] = useState('');
   const importInput = useRef<HTMLInputElement>(null);
+  const [editingEntry, setEditingEntry] = useState<Entry | null>(null);
+  const [editTask, setEditTask] = useState('');
+  const [editClient, setEditClient] = useState('');
+  const [editRate, setEditRate] = useState('');
+  const [editCommit, setEditCommit] = useState('');
+  const [editScreenshot, setEditScreenshot] = useState('');
+  const [editNotes, setEditNotes] = useState('');
 
   const running = entries.find((entry) => entry.status === 'running');
 
@@ -291,6 +299,24 @@ export default function Home() {
     }
   }
 
+  function openEdit(entry: Entry) {
+    setEditingEntry(entry); setEditTask(entry.task); setEditClient(entry.client); setEditRate(String(entry.hourlyRateCents / 100));
+    setEditCommit(entry.commitUrl ?? ''); setEditScreenshot(entry.screenshotUrl ?? ''); setEditNotes(entry.notes ?? ''); setError('');
+  }
+
+  async function saveEntryEdit(event: React.FormEvent) {
+    event.preventDefault();
+    if (!editingEntry) return;
+    setSaving(true); setError('');
+    try {
+      const response = await fetch('/api/entries', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'update', id: editingEntry.id, task: editTask, client: editClient, hourlyRate: Number(editRate), commitUrl: editCommit, screenshotUrl: editScreenshot, notes: editNotes }) });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error);
+      setEntries((current) => current.map((entry) => entry.id === data.entry.id ? data.entry : entry)); setEditingEntry(null);
+    } catch (reason) { setError(reason instanceof Error ? reason.message : 'Unable to update this entry.'); }
+    finally { setSaving(false); }
+  }
+
   function exportReport(records: Entry[] = completed, startDate: Date = weekStart) {
     const rows = [['Task', 'Client', 'Date', 'Started', 'Ended', 'Hours', 'Rate AUD', 'Value AUD', 'Commit', 'Screenshot', 'Notes', 'Started At ISO', 'Ended At ISO']];
     records.forEach((entry) => rows.push([entry.task, entry.client, dateFormatter.format(new Date(entry.startedAt)), timeFormatter.format(new Date(entry.startedAt)), entry.endedAt ? timeFormatter.format(new Date(entry.endedAt)) : '', ((entry.durationMinutes ?? 0) / 60).toFixed(2), (entry.hourlyRateCents / 100).toFixed(2), (((entry.durationMinutes ?? 0) / 60) * (entry.hourlyRateCents / 100)).toFixed(2), entry.commitUrl ?? '', entry.screenshotUrl ?? '', entry.notes ?? '', entry.startedAt, entry.endedAt ?? '']));
@@ -440,7 +466,7 @@ export default function Home() {
               ) : (
                 <div className="border-t border-white/10 bg-white/[.04] p-5 md:p-6">
                   <div className="grid gap-3 lg:grid-cols-3">
-                    <label className="field-label"><span>Commit link</span><div className="relative"><GitCommitHorizontal className="field-icon" /><Input value={commitUrl} onChange={(event) => setCommitUrl(event.target.value)} placeholder="github.com/.../commit/..." className="timer-input pl-10" /></div></label>
+                    <label className="field-label"><span>GitHub evidence</span><div className="relative"><GitCommitHorizontal className="field-icon" /><Input value={commitUrl} onChange={(event) => setCommitUrl(event.target.value)} placeholder="github.com/.../commit or /pull/..." className="timer-input pl-10" /></div></label>
                     <label className="field-label"><span>Screenshot link</span><div className="relative"><FileImage className="field-icon" /><Input value={screenshotUrl} onChange={(event) => setScreenshotUrl(event.target.value)} placeholder="Paste evidence URL" className="timer-input pl-10" /></div></label>
                     <label className="field-label"><span>What was completed?</span><Input value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="Short outcome note" className="timer-input" /></label>
                   </div>
@@ -465,7 +491,7 @@ export default function Home() {
 
             <div className="overflow-hidden rounded-[22px] border border-[#ced1cc] bg-[#f5f5f2]">
               <div className="flex items-center justify-between border-b border-[#d9dcd7] px-6 py-5"><div><p className="kicker">Evidence log</p><h2 className="mt-1 text-lg font-bold tracking-[-.03em]">Recent work</h2></div><button className="text-xs font-bold text-[#5a6c64]">View all <ArrowUpRight className="ml-1 inline size-3.5" /></button></div>
-              {loading ? <div className="grid min-h-52 place-items-center text-sm text-[#8a8981]">Loading your work…</div> : completed.length === 0 ? <div className="grid min-h-52 place-items-center px-6 text-center"><div><Clock3 className="mx-auto size-7 text-[#aaa89f]" /><p className="mt-3 text-sm font-semibold">No completed entries this week</p><p className="mt-1 text-xs text-[#8a8981]">Your first saved timer will appear here with its evidence.</p></div></div> : <div>{completed.slice(0, 5).map((entry) => <article key={entry.id} className="grid gap-3 border-b border-[#d9dcd7] px-6 py-4 last:border-0 md:grid-cols-[1fr_150px_110px_128px] md:items-center"><div><div className="flex items-center gap-2"><CheckCircle2 className="size-4 text-[#657a70]" /><h3 className="text-sm font-bold">{entry.task}</h3></div><p className="mt-1 pl-6 text-xs text-[#737b76]">{entry.client} · {dateFormatter.format(new Date(entry.startedAt))}</p></div><div className="text-xs"><p className="text-[#737b76]">{timeFormatter.format(new Date(entry.startedAt))} → {entry.endedAt ? timeFormatter.format(new Date(entry.endedAt)) : ''}</p><p className="mt-1 font-semibold">{moneyFormatter.format(entry.hourlyRateCents / 100)}/hr</p></div><p className="text-sm font-bold md:text-right">{formatDuration(entry.durationMinutes ?? 0)}</p><div className="flex gap-2 md:justify-end">{entry.commitUrl && <a href={entry.commitUrl} target="_blank" rel="noreferrer" className="evidence-link" aria-label="Open commit"><GitCommitHorizontal /></a>}{entry.screenshotUrl && <a href={entry.screenshotUrl} target="_blank" rel="noreferrer" className="evidence-link" aria-label="Open screenshot"><FileImage /></a>}<button onClick={() => deleteEntry(entry)} className="evidence-link hover:!border-[#a86e5b] hover:!bg-[#eadbd5] hover:!text-[#7f4d3d]" aria-label={`Delete ${entry.task}`}><Trash2 /></button></div></article>)}</div>}
+              {loading ? <div className="grid min-h-52 place-items-center text-sm text-[#8a8981]">Loading your work…</div> : completed.length === 0 ? <div className="grid min-h-52 place-items-center px-6 text-center"><div><Clock3 className="mx-auto size-7 text-[#aaa89f]" /><p className="mt-3 text-sm font-semibold">No completed entries this week</p><p className="mt-1 text-xs text-[#8a8981]">Your first saved timer will appear here with its evidence.</p></div></div> : <div>{completed.slice(0, 5).map((entry) => <article key={entry.id} className="grid gap-3 border-b border-[#d9dcd7] px-6 py-4 last:border-0 md:grid-cols-[1fr_150px_110px_128px] md:items-center"><div><div className="flex items-center gap-2"><CheckCircle2 className="size-4 text-[#657a70]" /><h3 className="text-sm font-bold">{entry.task}</h3></div><p className="mt-1 pl-6 text-xs text-[#737b76]">{entry.client} · {dateFormatter.format(new Date(entry.startedAt))}</p></div><div className="text-xs"><p className="text-[#737b76]">{timeFormatter.format(new Date(entry.startedAt))} → {entry.endedAt ? timeFormatter.format(new Date(entry.endedAt)) : ''}</p><p className="mt-1 font-semibold">{moneyFormatter.format(entry.hourlyRateCents / 100)}/hr</p></div><p className="text-sm font-bold md:text-right">{formatDuration(entry.durationMinutes ?? 0)}</p><div className="flex gap-2 md:justify-end"><button onClick={() => openEdit(entry)} className="evidence-link" aria-label={`Edit ${entry.task}`}><Pencil /></button>{entry.commitUrl && <a href={entry.commitUrl} target="_blank" rel="noreferrer" className="evidence-link" aria-label="Open GitHub evidence"><GitCommitHorizontal /></a>}{entry.screenshotUrl && <a href={entry.screenshotUrl} target="_blank" rel="noreferrer" className="evidence-link" aria-label="Open screenshot"><FileImage /></a>}<button onClick={() => deleteEntry(entry)} className="evidence-link hover:!border-[#a86e5b] hover:!bg-[#eadbd5] hover:!text-[#7f4d3d]" aria-label={`Delete ${entry.task}`}><Trash2 /></button></div></article>)}</div>}
             </div>
           </section>
           </>}
@@ -475,7 +501,7 @@ export default function Home() {
               <div className="page-heading"><div><p className="kicker">Weekly report</p><h1>Time, value and evidence.</h1><p>Review any week and export a client-ready work log.</p></div><Button onClick={() => { const current = getMonday(); setReportWeekStart(current); }} variant="outline" className="h-10 rounded-xl bg-[#f5f5f2]">This week</Button></div>
               <div className="week-switcher"><button onClick={() => moveReportWeek(-1)} aria-label="Previous week"><ChevronLeft /></button><div><strong>{dateFormatter.format(reportWeekStart)} – {dateFormatter.format(new Date(reportWeekEnd.getTime() - 86400000))}</strong><span>{reportEntries.length} completed {reportEntries.length === 1 ? 'entry' : 'entries'}</span></div><button onClick={() => moveReportWeek(1)} disabled={reportWeekStart >= getMonday()} aria-label="Next week"><ChevronRight /></button></div>
               <div className="metric-grid"><div className="metric-card dark"><span>Hours worked</span><strong>{formatDuration(reportMinutes)}</strong></div><div className="metric-card"><span>Billable value</span><strong>{moneyFormatter.format(reportValue)}</strong></div><div className="metric-card"><span>Clients</span><strong>{new Set(reportEntries.map((entry) => entry.client)).size}</strong></div></div>
-              <div className="data-panel mt-5"><div className="panel-heading"><div><p className="kicker">Work log</p><h2>Entries for this week</h2></div><div className="flex flex-wrap gap-2"><Button variant="outline" className="rounded-xl" onClick={() => importInput.current?.click()} disabled={saving}><FileUp /> Import CSV</Button><Button variant="outline" className="rounded-xl" onClick={() => exportEvidencePdf(reportEntries, reportWeekStart)} disabled={!reportEntries.length}><FileDown /> Export PDF</Button><Button variant="outline" className="rounded-xl" onClick={() => exportReport(reportEntries, reportWeekStart)}><Download /> Export CSV</Button></div></div>{importMessage && <p className="mx-6 mt-4 rounded-xl bg-[#e4eee7] px-4 py-3 text-sm font-semibold text-[#3d604a]">{importMessage}</p>}{reportEntries.length === 0 ? <div className="empty-panel"><BarChart3 /><strong>No work recorded for this week</strong><span>Use the timer or import an exported work week.</span></div> : <div className="table-wrap"><table><thead><tr><th>Date</th><th>Task</th><th>Client</th><th>Time</th><th>Rate</th><th>Value</th><th>Evidence</th></tr></thead><tbody>{reportEntries.map((entry) => <tr key={entry.id}><td>{dateFormatter.format(new Date(entry.startedAt))}</td><td><strong>{entry.task}</strong></td><td>{entry.client}</td><td>{formatDuration(entry.durationMinutes ?? 0)}</td><td>{moneyFormatter.format(entry.hourlyRateCents / 100)}</td><td>{moneyFormatter.format(((entry.durationMinutes ?? 0) / 60) * (entry.hourlyRateCents / 100))}</td><td><div className="flex gap-2">{entry.commitUrl && <a aria-label="Open commit" className="evidence-link" href={entry.commitUrl} target="_blank" rel="noreferrer"><GitCommitHorizontal /></a>}{entry.screenshotUrl && <a aria-label="Open screenshot" className="evidence-link" href={entry.screenshotUrl} target="_blank" rel="noreferrer"><FileImage /></a>}</div></td></tr>)}</tbody></table></div>}</div>
+              <div className="data-panel mt-5"><div className="panel-heading"><div><p className="kicker">Work log</p><h2>Entries for this week</h2></div><div className="flex flex-wrap gap-2"><Button variant="outline" className="rounded-xl" onClick={() => importInput.current?.click()} disabled={saving}><FileUp /> Import CSV</Button><Button variant="outline" className="rounded-xl" onClick={() => exportEvidencePdf(reportEntries, reportWeekStart)} disabled={!reportEntries.length}><FileDown /> Export PDF</Button><Button variant="outline" className="rounded-xl" onClick={() => exportReport(reportEntries, reportWeekStart)}><Download /> Export CSV</Button></div></div>{importMessage && <p className="mx-6 mt-4 rounded-xl bg-[#e4eee7] px-4 py-3 text-sm font-semibold text-[#3d604a]">{importMessage}</p>}{reportEntries.length === 0 ? <div className="empty-panel"><BarChart3 /><strong>No work recorded for this week</strong><span>Use the timer or import an exported work week.</span></div> : <div className="table-wrap"><table><thead><tr><th>Date</th><th>Task</th><th>Client</th><th>Time</th><th>Rate</th><th>Value</th><th>Evidence</th></tr></thead><tbody>{reportEntries.map((entry) => <tr key={entry.id}><td>{dateFormatter.format(new Date(entry.startedAt))}</td><td><strong>{entry.task}</strong></td><td>{entry.client}</td><td>{formatDuration(entry.durationMinutes ?? 0)}</td><td>{moneyFormatter.format(entry.hourlyRateCents / 100)}</td><td>{moneyFormatter.format(((entry.durationMinutes ?? 0) / 60) * (entry.hourlyRateCents / 100))}</td><td><div className="flex gap-2"><button onClick={() => openEdit(entry)} className="evidence-link" aria-label={`Edit ${entry.task}`}><Pencil /></button>{entry.commitUrl && <a aria-label="Open GitHub evidence" className="evidence-link" href={entry.commitUrl} target="_blank" rel="noreferrer"><GitCommitHorizontal /></a>}{entry.screenshotUrl && <a aria-label="Open screenshot" className="evidence-link" href={entry.screenshotUrl} target="_blank" rel="noreferrer"><FileImage /></a>}</div></td></tr>)}</tbody></table></div>}</div>
             </section>
           )}
 
@@ -508,11 +534,27 @@ export default function Home() {
               <label className="manual-field"><span>Rate / hour (AUD)</span><Input type="number" min="0" step="1" value={manualRate} onChange={(event) => setManualRate(event.target.value)} required /></label>
               <label className="manual-field"><span>Date</span><Input type="date" max={localDateValue()} value={manualDate} onChange={(event) => setManualDate(event.target.value)} required /></label>
               <div className="grid grid-cols-2 gap-3"><label className="manual-field"><span>Started</span><Input type="time" value={manualStart} onChange={(event) => setManualStart(event.target.value)} required /></label><label className="manual-field"><span>Finished</span><Input type="time" value={manualEnd} onChange={(event) => setManualEnd(event.target.value)} required /></label></div>
-              <label className="manual-field"><span>Commit link</span><Input type="url" value={manualCommit} onChange={(event) => setManualCommit(event.target.value)} placeholder="https://github.com/…" /></label>
+              <label className="manual-field"><span>GitHub evidence</span><Input type="url" value={manualCommit} onChange={(event) => setManualCommit(event.target.value)} placeholder="https://github.com/…/commit or /pull/…" /></label>
               <label className="manual-field"><span>Screenshot link</span><Input type="url" value={manualScreenshot} onChange={(event) => setManualScreenshot(event.target.value)} placeholder="https://…" /></label>
               <label className="manual-field sm:col-span-2"><span>What was completed?</span><Input value={manualNotes} onChange={(event) => setManualNotes(event.target.value)} placeholder="Short summary of the outcome" /></label>
             </div>
             <DialogFooter className="m-0 rounded-b-[22px] border-[#d9dcd7] bg-[#e9ebe7] px-6 py-4"><Button type="button" variant="ghost" onClick={() => setManualOpen(false)} className="h-10 rounded-xl px-4">Cancel</Button><Button type="submit" disabled={saving} className="h-10 rounded-xl bg-[#3d4b45] px-5 text-white hover:bg-[#2f3a35]">Save past work</Button></DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={Boolean(editingEntry)} onOpenChange={(open) => { if (!open) setEditingEntry(null); }}>
+        <DialogContent className="max-h-[calc(100vh-2rem)] overflow-y-auto rounded-[22px] bg-[#f5f5f2] p-0 sm:max-w-2xl">
+          <form onSubmit={saveEntryEdit}>
+            <DialogHeader className="border-b border-[#d9dcd7] px-6 py-5"><DialogTitle className="text-xl font-bold tracking-[-.035em]">Edit work entry</DialogTitle><DialogDescription>Update the title, billing details, or supporting evidence.</DialogDescription></DialogHeader>
+            <div className="grid gap-4 px-6 py-5 sm:grid-cols-2">
+              <label className="manual-field sm:col-span-2"><span>Task title</span><Input value={editTask} onChange={(event) => setEditTask(event.target.value)} required /></label>
+              <label className="manual-field"><span>Client</span><Input value={editClient} onChange={(event) => setEditClient(event.target.value)} required /></label>
+              <label className="manual-field"><span>Rate / hour (AUD)</span><Input type="number" min="0" step="1" value={editRate} onChange={(event) => setEditRate(event.target.value)} required /></label>
+              <label className="manual-field"><span>GitHub evidence</span><Input type="url" value={editCommit} onChange={(event) => setEditCommit(event.target.value)} placeholder="https://github.com/…/commit or /pull/…" /></label>
+              <label className="manual-field"><span>Screenshot link</span><Input type="url" value={editScreenshot} onChange={(event) => setEditScreenshot(event.target.value)} placeholder="https://…" /></label>
+              <label className="manual-field sm:col-span-2"><span>What was completed?</span><Input value={editNotes} onChange={(event) => setEditNotes(event.target.value)} placeholder="Short summary of the outcome" /></label>
+            </div>
+            <DialogFooter className="m-0 rounded-b-[22px] border-[#d9dcd7] bg-[#e9ebe7] px-6 py-4"><Button type="button" variant="ghost" onClick={() => setEditingEntry(null)} className="h-10 rounded-xl px-4">Cancel</Button><Button type="submit" disabled={saving} className="h-10 rounded-xl bg-[#3d4b45] px-5 text-white hover:bg-[#2f3a35]">Save changes</Button></DialogFooter>
           </form>
         </DialogContent>
       </Dialog>

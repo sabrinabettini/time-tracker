@@ -114,6 +114,23 @@ export async function addManualTimeEntry(input: {
   return mapRow(result);
 }
 
+export async function updateTimeEntry(id: number, input: {
+  task: string;
+  client: string;
+  hourlyRateCents: number;
+  commitUrl: string;
+  screenshotUrl: string;
+  notes: string;
+}) {
+  await ensureTimeEntriesTable();
+  const result = await env.DB.prepare(
+    `UPDATE time_entries SET task = ?, client = ?, hourly_rate_cents = ?, commit_url = ?, screenshot_url = ?, notes = ?
+     WHERE id = ? AND status = 'completed' RETURNING *`,
+  ).bind(input.task, input.client, input.hourlyRateCents, input.commitUrl || null, input.screenshotUrl || null, input.notes || null, id).first<Record<string, unknown>>();
+  if (!result) throw new Error('Completed entry not found.');
+  return mapRow(result);
+}
+
 export type ImportedTimeEntry = {
   task: string;
   client: string;

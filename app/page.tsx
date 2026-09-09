@@ -304,8 +304,9 @@ export default function Home() {
 
   function exportEvidencePdf(records: Entry[] = reportEntries, startDate: Date = reportWeekStart) {
     if (!records.length) { setError('Add or import at least one completed entry before exporting a PDF.'); return; }
-    const printWindow = window.open('', '_blank', 'noopener,noreferrer');
+    const printWindow = window.open('', '_blank');
     if (!printWindow) { setError('Your browser blocked the PDF window. Allow pop-ups and try again.'); return; }
+    printWindow.opener = null;
     const document = printWindow.document;
     document.title = `Time report ${startDate.toISOString().slice(0, 10)}`;
     document.head.innerHTML = '<style>@page{margin:18mm}body{color:#202522;font:12px Arial,sans-serif}h1{font-size:25px;margin:0 0 5px}h2{font-size:16px;margin:0}p{color:#626b66;margin:0 0 18px}.summary{display:flex;gap:25px;border:1px solid #d7ddd8;padding:13px 15px;margin:20px 0}.summary strong{display:block;color:#202522;font-size:16px}.entry{break-inside:avoid;border-top:1px solid #d7ddd8;padding:18px 0}.meta{display:flex;justify-content:space-between;gap:18px;margin-top:6px}.notes{margin-top:10px;color:#454d48}.evidence{margin-top:13px}.evidence img{display:block;max-width:100%;max-height:130mm;border:1px solid #d7ddd8;border-radius:4px}.muted{color:#727a75;font-size:11px}@media print{.entry{page-break-inside:avoid}}</style>';

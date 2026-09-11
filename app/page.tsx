@@ -61,9 +61,16 @@ type SettingsData = {
   weekStartsOn: number;
 };
 
-const dayFormatter = new Intl.DateTimeFormat('en-AU', { weekday: 'short' });
-const dateFormatter = new Intl.DateTimeFormat('en-AU', { day: '2-digit', month: 'short' });
-const timeFormatter = new Intl.DateTimeFormat('en-AU', { hour: '2-digit', minute: '2-digit' });
+const APP_TIME_ZONE = 'Australia/Sydney';
+const dayFormatter = new Intl.DateTimeFormat('en-AU', { weekday: 'short', timeZone: APP_TIME_ZONE });
+const dateFormatter = new Intl.DateTimeFormat('en-AU', { day: '2-digit', month: 'short', timeZone: APP_TIME_ZONE });
+const timeFormatter = new Intl.DateTimeFormat('en-AU', { hour: '2-digit', minute: '2-digit', timeZone: APP_TIME_ZONE });
+const dateValueFormatter = new Intl.DateTimeFormat('en-CA', {
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+  timeZone: APP_TIME_ZONE,
+});
 const moneyFormatter = new Intl.NumberFormat('en-AU', { style: 'currency', currency: 'AUD', maximumFractionDigits: 0 });
 
 function formatDuration(minutes: number) {
@@ -73,16 +80,17 @@ function formatDuration(minutes: number) {
 }
 
 function getMonday(date = new Date()) {
-  const copy = new Date(date);
-  const day = copy.getDay() || 7;
-  copy.setHours(0, 0, 0, 0);
-  copy.setDate(copy.getDate() - day + 1);
+  const [year, month, dayOfMonth] = localDateValue(date).split('-').map(Number);
+  const copy = new Date(Date.UTC(year, month - 1, dayOfMonth, 12));
+  const day = copy.getUTCDay() || 7;
+  copy.setUTCDate(copy.getUTCDate() - day + 1);
   return copy;
 }
 
 function localDateValue(date = new Date()) {
-  const offset = date.getTimezoneOffset() * 60000;
-  return new Date(date.getTime() - offset).toISOString().slice(0, 10);
+  const parts = dateValueFormatter.formatToParts(date);
+  const value = (type: Intl.DateTimeFormatPartTypes) => parts.find((part) => part.type === type)?.value ?? '';
+  return `${value('year')}-${value('month')}-${value('day')}`;
 }
 
 function parseCsv(text: string) {
@@ -121,7 +129,7 @@ export default function Home() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
-  const [now, setNow] = useState(Date.now());
+  const [now, setNow] = useState(0);
   const [manualOpen, setManualOpen] = useState(false);
   const [manualTask, setManualTask] = useState('');
   const [manualClient, setManualClient] = useState('');
@@ -169,6 +177,10 @@ export default function Home() {
         setManualRate(String(data.settings.defaultRateCents / 100));
       })
       .catch((reason) => setError(reason.message || 'Unable to load settings.'));
+  }, []);
+
+  useEffect(() => {
+    setNow(Date.now());
   }, []);
 
   useEffect(() => {
@@ -417,7 +429,7 @@ export default function Home() {
     }
   }
 
-  const elapsedSeconds = running ? Math.max(0, Math.floor((now - new Date(running.startedAt).getTime()) / 1000)) : 0;
+  const elapsedSeconds = running && now ? Math.max(0, Math.floor((now - new Date(running.startedAt).getTime()) / 1000)) : 0;
   const elapsed = `${Math.floor(elapsedSeconds / 3600).toString().padStart(2, '0')}:${Math.floor((elapsedSeconds % 3600) / 60).toString().padStart(2, '0')}:${(elapsedSeconds % 60).toString().padStart(2, '0')}`;
 
   return (

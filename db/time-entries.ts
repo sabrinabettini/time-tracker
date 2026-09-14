@@ -5,6 +5,8 @@ export type TimeEntry = {
   task: string;
   client: string;
   hourlyRateCents: number;
+  rateName: string;
+  billingRateId: number | null;
   startedAt: string;
   endedAt: string | null;
   durationMinutes: number | null;
@@ -42,6 +44,8 @@ function mapRow(row: Record<string, unknown>): TimeEntry {
     task: String(row.task),
     client: String(row.client),
     hourlyRateCents: Number(row.hourly_rate_cents),
+    rateName: String(row.rate_name ?? 'Legacy rate'),
+    billingRateId: row.billing_rate_id == null ? null : Number(row.billing_rate_id),
     startedAt: String(row.started_at),
     endedAt: row.ended_at ? String(row.ended_at) : null,
     durationMinutes: row.duration_minutes == null ? null : Number(row.duration_minutes),
@@ -59,13 +63,13 @@ export async function listTimeEntries(): Promise<TimeEntry[]> {
   return (result.results as Record<string, unknown>[]).map(mapRow);
 }
 
-export async function startTimeEntry(task: string, client: string, hourlyRateCents: number) {
+export async function startTimeEntry(task: string, client: string, billingRateId: number, rateName: string, hourlyRateCents: number) {
   await ensureTimeEntriesTable();
   const now = new Date().toISOString();
   const result = await env.DB.prepare(
-    `INSERT INTO time_entries (task, client, hourly_rate_cents, started_at, status, created_at)
-     VALUES (?, ?, ?, ?, 'running', ?) RETURNING *`,
-  ).bind(task, client, hourlyRateCents, now, now).first<Record<string, unknown>>();
+    `INSERT INTO time_entries (task, client, billing_rate_id, rate_name, hourly_rate_cents, started_at, status, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, 'running', ?) RETURNING *`,
+  ).bind(task, client, billingRateId, rateName, hourlyRateCents, now, now).first<Record<string, unknown>>();
   if (!result) throw new Error('Unable to start timer');
   return mapRow(result);
 }
@@ -89,6 +93,8 @@ export async function addManualTimeEntry(input: {
   task: string;
   client: string;
   hourlyRateCents: number;
+  rateName: string;
+  billingRateId: number;
   startedAt: string;
   endedAt: string;
   commitUrl: string;
@@ -107,9 +113,9 @@ export async function addManualTimeEntry(input: {
   }
   const createdAt = new Date().toISOString();
   const result = await env.DB.prepare(
-    `INSERT INTO time_entries (task, client, hourly_rate_cents, started_at, ended_at, duration_minutes, status, commit_url, screenshot_url, notes, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, 'completed', ?, ?, ?, ?) RETURNING *`,
-  ).bind(input.task, input.client, input.hourlyRateCents, start.toISOString(), end.toISOString(), minutes, input.commitUrl || null, input.screenshotUrl || null, input.notes || null, createdAt).first<Record<string, unknown>>();
+    `INSERT INTO time_entries (task, client, billing_rate_id, rate_name, hourly_rate_cents, started_at, ended_at, duration_minutes, status, commit_url, screenshot_url, notes, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'completed', ?, ?, ?, ?) RETURNING *`,
+  ).bind(input.task, input.client, input.billingRateId, input.rateName, input.hourlyRateCents, start.toISOString(), end.toISOString(), minutes, input.commitUrl || null, input.screenshotUrl || null, input.notes || null, createdAt).first<Record<string, unknown>>();
   if (!result) throw new Error('Unable to add past work');
   return mapRow(result);
 }
@@ -118,15 +124,17 @@ export async function updateTimeEntry(id: number, input: {
   task: string;
   client: string;
   hourlyRateCents: number;
+  rateName: string;
+  billingRateId: number;
   commitUrl: string;
   screenshotUrl: string;
   notes: string;
 }) {
   await ensureTimeEntriesTable();
   const result = await env.DB.prepare(
-    `UPDATE time_entries SET task = ?, client = ?, hourly_rate_cents = ?, commit_url = ?, screenshot_url = ?, notes = ?
+    `UPDATE time_entries SET task = ?, client = ?, billing_rate_id = ?, rate_name = ?, hourly_rate_cents = ?, commit_url = ?, screenshot_url = ?, notes = ?
      WHERE id = ? AND status = 'completed' RETURNING *`,
-  ).bind(input.task, input.client, input.hourlyRateCents, input.commitUrl || null, input.screenshotUrl || null, input.notes || null, id).first<Record<string, unknown>>();
+  ).bind(input.task, input.client, input.billingRateId, input.rateName, input.hourlyRateCents, input.commitUrl || null, input.screenshotUrl || null, input.notes || null, id).first<Record<string, unknown>>();
   if (!result) throw new Error('Completed entry not found.');
   return mapRow(result);
 }

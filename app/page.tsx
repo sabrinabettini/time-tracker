@@ -42,6 +42,8 @@ type Entry = {
   task: string;
   client: string;
   hourlyRateCents: number;
+  rateName: string;
+  billingRateId: number | null;
   startedAt: string;
   endedAt: string | null;
   durationMinutes: number | null;
@@ -49,6 +51,13 @@ type Entry = {
   commitUrl: string | null;
   screenshotUrl: string | null;
   notes: string | null;
+};
+
+type BillingRate = {
+  id: number;
+  name: string;
+  description: string;
+  hourlyRateCents: number;
 };
 
 type View = 'dashboard' | 'report' | 'clients' | 'settings';
@@ -122,7 +131,8 @@ export default function Home() {
   const [entries, setEntries] = useState<Entry[]>([]);
   const [task, setTask] = useState('');
   const [client, setClient] = useState('');
-  const [rate, setRate] = useState('150');
+  const [rates, setRates] = useState<BillingRate[]>([]);
+  const [selectedRateId, setSelectedRateId] = useState('');
   const [commitUrl, setCommitUrl] = useState('');
   const [screenshotUrl, setScreenshotUrl] = useState('');
   const [notes, setNotes] = useState('');
@@ -133,7 +143,7 @@ export default function Home() {
   const [manualOpen, setManualOpen] = useState(false);
   const [manualTask, setManualTask] = useState('');
   const [manualClient, setManualClient] = useState('');
-  const [manualRate, setManualRate] = useState('150');
+  const [manualRateId, setManualRateId] = useState('');
   const [manualDate, setManualDate] = useState(localDateValue());
   const [manualStart, setManualStart] = useState('09:00');
   const [manualEnd, setManualEnd] = useState('10:00');
@@ -149,10 +159,13 @@ export default function Home() {
   const [editingEntry, setEditingEntry] = useState<Entry | null>(null);
   const [editTask, setEditTask] = useState('');
   const [editClient, setEditClient] = useState('');
-  const [editRate, setEditRate] = useState('');
+  const [editRateId, setEditRateId] = useState('');
   const [editCommit, setEditCommit] = useState('');
   const [editScreenshot, setEditScreenshot] = useState('');
   const [editNotes, setEditNotes] = useState('');
+  const [newRateName, setNewRateName] = useState('');
+  const [newRateDescription, setNewRateDescription] = useState('');
+  const [newRateFee, setNewRateFee] = useState('');
 
   const running = entries.find((entry) => entry.status === 'running');
 
@@ -168,13 +181,25 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
+    fetch('/api/rates')
+      .then(async (response) => {
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error);
+        setRates(data.rates);
+        if (data.rates[0]) {
+          setSelectedRateId(String(data.rates[0].id));
+          setManualRateId(String(data.rates[0].id));
+        }
+      })
+      .catch((reason) => setError(reason.message || 'Unable to load billing rates.'));
+  }, []);
+
+  useEffect(() => {
     fetch('/api/settings')
       .then(async (response) => {
         const data = await response.json();
         if (!response.ok) throw new Error(data.error);
         setSettings(data.settings);
-        setRate(String(data.settings.defaultRateCents / 100));
-        setManualRate(String(data.settings.defaultRateCents / 100));
       })
       .catch((reason) => setError(reason.message || 'Unable to load settings.'));
   }, []);
@@ -211,6 +236,11 @@ export default function Home() {
   const reportEntries = entries.filter((entry) => entry.status === 'completed' && new Date(entry.startedAt) >= reportWeekStart && new Date(entry.startedAt) < reportWeekEnd);
   const reportMinutes = reportEntries.reduce((sum, entry) => sum + (entry.durationMinutes ?? 0), 0);
   const reportValue = reportEntries.reduce((sum, entry) => sum + ((entry.durationMinutes ?? 0) / 60) * (entry.hourlyRateCents / 100), 0);
+  const reportRateSummary = Array.from(new Map(reportEntries.map((entry) => [`${entry.rateName}|${entry.hourlyRateCents}`, { name: entry.rateName, hourlyRateCents: entry.hourlyRateCents }])).values()).map((rateItem) => {
+    const rateEntries = reportEntries.filter((entry) => entry.rateName === rateItem.name && entry.hourlyRateCents === rateItem.hourlyRateCents);
+    const minutes = rateEntries.reduce((sum, entry) => sum + (entry.durationMinutes ?? 0), 0);
+    return { ...rateItem, minutes, activities: rateEntries.length, total: (minutes / 60) * (rateItem.hourlyRateCents / 100) };
+  }).sort((a, b) => b.total - a.total);
   const clientStats = Array.from(new Set(entries.filter((entry) => entry.status === 'completed').map((entry) => entry.client))).map((clientName) => {
     const clientEntries = entries.filter((entry) => entry.status === 'completed' && entry.client === clientName);
     return {
@@ -228,7 +258,7 @@ export default function Home() {
     setSaving(true);
     setError('');
     try {
-      const response = await fetch('/api/entries', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'start', task, client, hourlyRate: Number(rate) }) });
+      const response = await fetch('/api/entries', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'start', task, client, billingRateId: Number(selectedRateId) }) });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error);
       setEntries((current) => [data.entry, ...current]);
@@ -269,7 +299,7 @@ export default function Home() {
           action: 'manual',
           task: manualTask,
           client: manualClient,
-          hourlyRate: Number(manualRate),
+          billingRateId: Number(manualRateId),
           startedAt: new Date(`${manualDate}T${manualStart}:00`).toISOString(),
           endedAt: new Date(`${manualDate}T${manualEnd}:00`).toISOString(),
           commitUrl: manualCommit,
@@ -312,7 +342,7 @@ export default function Home() {
   }
 
   function openEdit(entry: Entry) {
-    setEditingEntry(entry); setEditTask(entry.task); setEditClient(entry.client); setEditRate(String(entry.hourlyRateCents / 100));
+    setEditingEntry(entry); setEditTask(entry.task); setEditClient(entry.client); setEditRateId(entry.billingRateId ? String(entry.billingRateId) : '');
     setEditCommit(entry.commitUrl ?? ''); setEditScreenshot(entry.screenshotUrl ?? ''); setEditNotes(entry.notes ?? ''); setError('');
   }
 
@@ -321,7 +351,7 @@ export default function Home() {
     if (!editingEntry) return;
     setSaving(true); setError('');
     try {
-      const response = await fetch('/api/entries', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'update', id: editingEntry.id, task: editTask, client: editClient, hourlyRate: Number(editRate), commitUrl: editCommit, screenshotUrl: editScreenshot, notes: editNotes }) });
+      const response = await fetch('/api/entries', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'update', id: editingEntry.id, task: editTask, client: editClient, billingRateId: Number(editRateId), commitUrl: editCommit, screenshotUrl: editScreenshot, notes: editNotes }) });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error);
       setEntries((current) => current.map((entry) => entry.id === data.entry.id ? data.entry : entry)); setEditingEntry(null);
@@ -330,8 +360,8 @@ export default function Home() {
   }
 
   function exportReport(records: Entry[] = completed, startDate: Date = weekStart) {
-    const rows = [['Task', 'Client', 'Date', 'Started', 'Ended', 'Hours', 'Rate AUD', 'Value AUD', 'GitHub evidence', 'Screenshot evidence', 'What was completed?', 'Started At ISO', 'Ended At ISO']];
-    records.forEach((entry) => rows.push([entry.task, entry.client, dateFormatter.format(new Date(entry.startedAt)), timeFormatter.format(new Date(entry.startedAt)), entry.endedAt ? timeFormatter.format(new Date(entry.endedAt)) : '', ((entry.durationMinutes ?? 0) / 60).toFixed(2), (entry.hourlyRateCents / 100).toFixed(2), (((entry.durationMinutes ?? 0) / 60) * (entry.hourlyRateCents / 100)).toFixed(2), entry.commitUrl ?? '', entry.screenshotUrl ?? '', entry.notes ?? '', entry.startedAt, entry.endedAt ?? '']));
+    const rows = [['Task', 'Client', 'Date', 'Started', 'Ended', 'Hours', 'Rate name', 'Rate AUD', 'Value AUD', 'GitHub evidence', 'Screenshot evidence', 'What was completed?', 'Started At ISO', 'Ended At ISO']];
+    records.forEach((entry) => rows.push([entry.task, entry.client, dateFormatter.format(new Date(entry.startedAt)), timeFormatter.format(new Date(entry.startedAt)), entry.endedAt ? timeFormatter.format(new Date(entry.endedAt)) : '', ((entry.durationMinutes ?? 0) / 60).toFixed(2), entry.rateName, (entry.hourlyRateCents / 100).toFixed(2), (((entry.durationMinutes ?? 0) / 60) * (entry.hourlyRateCents / 100)).toFixed(2), entry.commitUrl ?? '', entry.screenshotUrl ?? '', entry.notes ?? '', entry.startedAt, entry.endedAt ?? '']));
     const csv = rows.map((row) => row.map((value) => `"${String(value).replaceAll('"', '""')}"`).join(',')).join('\n');
     const link = document.createElement('a');
     link.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
@@ -354,10 +384,18 @@ export default function Home() {
     const summary = document.createElement('div'); summary.className = 'summary';
     [['Hours worked', formatDuration(records.reduce((sum, entry) => sum + (entry.durationMinutes ?? 0), 0))], ['Billable value', moneyFormatter.format(records.reduce((sum, entry) => sum + ((entry.durationMinutes ?? 0) / 60) * (entry.hourlyRateCents / 100), 0))], ['Entries', String(records.length)]].forEach(([label, value]) => { const item = document.createElement('div'); const name = document.createElement('span'); name.textContent = label; const amount = document.createElement('strong'); amount.textContent = value; item.append(name, amount); summary.append(item); });
     body.append(summary);
+    const ratesHeading = document.createElement('h2'); ratesHeading.textContent = 'Summary by rate'; body.append(ratesHeading);
+    const rateSummary = document.createElement('div'); rateSummary.className = 'summary';
+    Array.from(new Map(records.map((entry) => [`${entry.rateName}|${entry.hourlyRateCents}`, entry])).values()).forEach((rateEntry) => {
+      const matching = records.filter((entry) => entry.rateName === rateEntry.rateName && entry.hourlyRateCents === rateEntry.hourlyRateCents);
+      const minutes = matching.reduce((sum, entry) => sum + (entry.durationMinutes ?? 0), 0);
+      const item = document.createElement('div'); const name = document.createElement('span'); name.textContent = `${rateEntry.rateName} · ${moneyFormatter.format(rateEntry.hourlyRateCents / 100)}/hr`; const amount = document.createElement('strong'); amount.textContent = `${formatDuration(minutes)} · ${moneyFormatter.format((minutes / 60) * (rateEntry.hourlyRateCents / 100))}`; item.append(name, amount); rateSummary.append(item);
+    });
+    body.append(rateSummary);
     records.forEach((entry) => {
       const section = document.createElement('section'); section.className = 'entry';
       const title = document.createElement('h2'); title.textContent = entry.task; section.append(title);
-      const meta = document.createElement('div'); meta.className = 'meta'; const left = document.createElement('span'); left.textContent = `${entry.client} · ${dateFormatter.format(new Date(entry.startedAt))}`; const right = document.createElement('span'); right.textContent = `${timeFormatter.format(new Date(entry.startedAt))} – ${entry.endedAt ? timeFormatter.format(new Date(entry.endedAt)) : ''} · ${formatDuration(entry.durationMinutes ?? 0)} · ${moneyFormatter.format(((entry.durationMinutes ?? 0) / 60) * (entry.hourlyRateCents / 100))}`; meta.append(left, right); section.append(meta);
+      const meta = document.createElement('div'); meta.className = 'meta'; const left = document.createElement('span'); left.textContent = `${entry.client} · ${dateFormatter.format(new Date(entry.startedAt))}`; const right = document.createElement('span'); right.textContent = `${entry.rateName} @ ${moneyFormatter.format(entry.hourlyRateCents / 100)}/hr · ${formatDuration(entry.durationMinutes ?? 0)} · ${moneyFormatter.format(((entry.durationMinutes ?? 0) / 60) * (entry.hourlyRateCents / 100))}`; meta.append(left, right); section.append(meta);
       if (entry.notes) { const notes = document.createElement('div'); notes.className = 'notes'; notes.textContent = entry.notes; section.append(notes); }
       if (entry.commitUrl || entry.screenshotUrl) {
         const evidence = document.createElement('div'); evidence.className = 'evidence';
@@ -419,14 +457,26 @@ export default function Home() {
       const data = await response.json();
       if (!response.ok) throw new Error(data.error);
       setSettings(data.settings);
-      setRate(String(data.settings.defaultRateCents / 100));
-      setManualRate(String(data.settings.defaultRateCents / 100));
       setSettingsSaved(true);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Unable to save settings.');
     } finally {
       setSaving(false);
     }
+  }
+
+  async function addBillingRate(event: React.FormEvent) {
+    event.preventDefault();
+    setSaving(true); setError('');
+    try {
+      const response = await fetch('/api/rates', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: newRateName, description: newRateDescription, hourlyRate: Number(newRateFee) }) });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error);
+      setRates((current) => [...current, data.rate].sort((a, b) => a.name.localeCompare(b.name)));
+      setSelectedRateId(String(data.rate.id)); setManualRateId(String(data.rate.id));
+      setNewRateName(''); setNewRateDescription(''); setNewRateFee('');
+    } catch (reason) { setError(reason instanceof Error ? reason.message : 'Unable to add this rate.'); }
+    finally { setSaving(false); }
   }
 
   const elapsedSeconds = running && now ? Math.max(0, Math.floor((now - new Date(running.startedAt).getTime()) / 1000)) : 0;
@@ -471,16 +521,16 @@ export default function Home() {
               <div className="grid gap-8 p-6 lg:grid-cols-[1fr_auto] lg:p-8">
                 <div>
                   <div className="flex items-center gap-2 text-xs font-semibold text-[#d8c0b5]"><span className={`size-2 rounded-full ${running ? 'animate-pulse bg-[#b77a65]' : 'bg-white/30'}`} />{running ? 'Timer running' : 'Ready to focus'}</div>
-                  {running ? <><h2 className="mt-4 text-2xl font-semibold tracking-[-.04em]">{running.task}</h2><p className="mt-1 text-sm text-white/55">{running.client} · {moneyFormatter.format(running.hourlyRateCents / 100)}/hr</p></> : <><h2 className="mt-4 text-2xl font-semibold tracking-[-.04em]">What are you working on?</h2><p className="mt-1 text-sm text-white/50">Set the task, client and rate before you start.</p></>}
+                  {running ? <><h2 className="mt-4 text-2xl font-semibold tracking-[-.04em]">{running.task}</h2><p className="mt-1 text-sm text-white/55">{running.client} · {running.rateName} at {moneyFormatter.format(running.hourlyRateCents / 100)}/hr</p></> : <><h2 className="mt-4 text-2xl font-semibold tracking-[-.04em]">What are you working on?</h2><p className="mt-1 text-sm text-white/50">Set the task, client and rate before you start.</p></>}
                 </div>
                 <div className="font-mono text-[clamp(2.6rem,6vw,4.8rem)] font-medium leading-none tracking-[-.08em] tabular-nums text-[#f6f4ed]">{elapsed}</div>
               </div>
 
               {!running ? (
-                <form onSubmit={startTimer} className="grid gap-3 border-t border-white/10 bg-white/[.04] p-5 md:grid-cols-[1.6fr_1fr_120px_auto] md:p-6">
+                <form onSubmit={startTimer} className="grid gap-3 border-t border-white/10 bg-white/[.04] p-5 md:grid-cols-[1.6fr_1fr_190px_auto] md:p-6">
                   <label className="field-label"><span>Task</span><Input value={task} onChange={(event) => setTask(event.target.value)} placeholder="e.g. Booking flow API" required className="timer-input" /></label>
                   <label className="field-label"><span>Client</span><Input value={client} onChange={(event) => setClient(event.target.value)} placeholder="Client name" required className="timer-input" /></label>
-                  <label className="field-label"><span>Rate / hr</span><Input value={rate} onChange={(event) => setRate(event.target.value)} min="0" step="1" type="number" required className="timer-input" /></label>
+                  <label className="field-label"><span>Billing rate</span><select value={selectedRateId} onChange={(event) => setSelectedRateId(event.target.value)} required className="timer-input h-11 rounded-md px-3"><option value="" disabled>{rates.length ? 'Select rate' : 'Add a rate in Settings'}</option>{rates.map((item) => <option key={item.id} value={item.id}>{item.name} · {moneyFormatter.format(item.hourlyRateCents / 100)}/hr</option>)}</select></label>
                   <Button disabled={saving} type="submit" className="mt-auto h-11 rounded-xl bg-[#a86e5b] px-5 font-bold text-white hover:bg-[#925b49]"><Play fill="currentColor" /> Start</Button>
                 </form>
               ) : (
@@ -511,7 +561,7 @@ export default function Home() {
 
             <div className="overflow-hidden rounded-[22px] border border-[#ced1cc] bg-[#f5f5f2]">
               <div className="flex items-center justify-between border-b border-[#d9dcd7] px-6 py-5"><div><p className="kicker">Evidence log</p><h2 className="mt-1 text-lg font-bold tracking-[-.03em]">Recent work</h2></div><button className="text-xs font-bold text-[#5a6c64]">View all <ArrowUpRight className="ml-1 inline size-3.5" /></button></div>
-              {loading ? <div className="grid min-h-52 place-items-center text-sm text-[#8a8981]">Loading your work…</div> : completed.length === 0 ? <div className="grid min-h-52 place-items-center px-6 text-center"><div><Clock3 className="mx-auto size-7 text-[#aaa89f]" /><p className="mt-3 text-sm font-semibold">No completed entries this week</p><p className="mt-1 text-xs text-[#8a8981]">Your first saved timer will appear here with its evidence.</p></div></div> : <div>{completed.slice(0, 5).map((entry) => <article key={entry.id} className="grid gap-3 border-b border-[#d9dcd7] px-6 py-4 last:border-0 md:grid-cols-[1fr_150px_110px_128px] md:items-center"><div><div className="flex items-center gap-2"><CheckCircle2 className="size-4 text-[#657a70]" /><h3 className="text-sm font-bold">{entry.task}</h3></div><p className="mt-1 pl-6 text-xs text-[#737b76]">{entry.client} · {dateFormatter.format(new Date(entry.startedAt))}</p></div><div className="text-xs"><p className="text-[#737b76]">{timeFormatter.format(new Date(entry.startedAt))} → {entry.endedAt ? timeFormatter.format(new Date(entry.endedAt)) : ''}</p><p className="mt-1 font-semibold">{moneyFormatter.format(entry.hourlyRateCents / 100)}/hr</p></div><p className="text-sm font-bold md:text-right">{formatDuration(entry.durationMinutes ?? 0)}</p><div className="flex gap-2 md:justify-end"><button onClick={() => openEdit(entry)} className="evidence-link" aria-label={`Edit ${entry.task}`}><Pencil /></button>{entry.commitUrl && <a href={entry.commitUrl} target="_blank" rel="noreferrer" className="evidence-link" aria-label="Open GitHub evidence"><GitCommitHorizontal /></a>}{entry.screenshotUrl && <a href={entry.screenshotUrl} target="_blank" rel="noreferrer" className="evidence-link" aria-label="Open screenshot"><FileImage /></a>}<button onClick={() => deleteEntry(entry)} className="evidence-link hover:!border-[#a86e5b] hover:!bg-[#eadbd5] hover:!text-[#7f4d3d]" aria-label={`Delete ${entry.task}`}><Trash2 /></button></div></article>)}</div>}
+              {loading ? <div className="grid min-h-52 place-items-center text-sm text-[#8a8981]">Loading your work…</div> : completed.length === 0 ? <div className="grid min-h-52 place-items-center px-6 text-center"><div><Clock3 className="mx-auto size-7 text-[#aaa89f]" /><p className="mt-3 text-sm font-semibold">No completed entries this week</p><p className="mt-1 text-xs text-[#8a8981]">Your first saved timer will appear here with its evidence.</p></div></div> : <div>{completed.slice(0, 5).map((entry) => <article key={entry.id} className="grid gap-3 border-b border-[#d9dcd7] px-6 py-4 last:border-0 md:grid-cols-[1fr_170px_110px_128px] md:items-center"><div><div className="flex items-center gap-2"><CheckCircle2 className="size-4 text-[#657a70]" /><h3 className="text-sm font-bold">{entry.task}</h3></div><p className="mt-1 pl-6 text-xs text-[#737b76]">{entry.client} · {dateFormatter.format(new Date(entry.startedAt))}</p></div><div className="text-xs"><p className="text-[#737b76]">{timeFormatter.format(new Date(entry.startedAt))} → {entry.endedAt ? timeFormatter.format(new Date(entry.endedAt)) : ''}</p><p className="mt-1 font-semibold">{entry.rateName} · {moneyFormatter.format(entry.hourlyRateCents / 100)}/hr</p></div><p className="text-sm font-bold md:text-right">{formatDuration(entry.durationMinutes ?? 0)}</p><div className="flex gap-2 md:justify-end"><button onClick={() => openEdit(entry)} className="evidence-link" aria-label={`Edit ${entry.task}`}><Pencil /></button>{entry.commitUrl && <a href={entry.commitUrl} target="_blank" rel="noreferrer" className="evidence-link" aria-label="Open GitHub evidence"><GitCommitHorizontal /></a>}{entry.screenshotUrl && <a href={entry.screenshotUrl} target="_blank" rel="noreferrer" className="evidence-link" aria-label="Open screenshot"><FileImage /></a>}<button onClick={() => deleteEntry(entry)} className="evidence-link hover:!border-[#a86e5b] hover:!bg-[#eadbd5] hover:!text-[#7f4d3d]" aria-label={`Delete ${entry.task}`}><Trash2 /></button></div></article>)}</div>}
             </div>
           </section>
           </>}
@@ -520,8 +570,9 @@ export default function Home() {
             <section>
               <div className="page-heading"><div><p className="kicker">Weekly report</p><h1>Time, value and evidence.</h1><p>Review any week and export a client-ready work log.</p></div><Button onClick={() => { const current = getMonday(); setReportWeekStart(current); }} variant="outline" className="h-10 rounded-xl bg-[#f5f5f2]">This week</Button></div>
               <div className="week-switcher"><button onClick={() => moveReportWeek(-1)} aria-label="Previous week"><ChevronLeft /></button><div><strong>{dateFormatter.format(reportWeekStart)} – {dateFormatter.format(new Date(reportWeekEnd.getTime() - 86400000))}</strong><span>{reportEntries.length} completed {reportEntries.length === 1 ? 'entry' : 'entries'}</span></div><button onClick={() => moveReportWeek(1)} disabled={reportWeekStart >= getMonday()} aria-label="Next week"><ChevronRight /></button></div>
-              <div className="metric-grid"><div className="metric-card dark"><span>Hours worked</span><strong>{formatDuration(reportMinutes)}</strong></div><div className="metric-card"><span>Billable value</span><strong>{moneyFormatter.format(reportValue)}</strong></div><div className="metric-card"><span>Clients</span><strong>{new Set(reportEntries.map((entry) => entry.client)).size}</strong></div></div>
-              <div className="data-panel mt-5"><div className="panel-heading"><div><p className="kicker">Work log</p><h2>Entries for this week</h2></div><div className="flex flex-wrap gap-2"><Button variant="outline" className="rounded-xl" onClick={() => importInput.current?.click()} disabled={saving}><FileUp /> Import CSV</Button><Button variant="outline" className="rounded-xl" onClick={() => exportEvidencePdf(reportEntries, reportWeekStart)} disabled={!reportEntries.length}><FileDown /> Export PDF</Button><Button variant="outline" className="rounded-xl" onClick={() => exportReport(reportEntries, reportWeekStart)}><Download /> Export CSV</Button></div></div>{importMessage && <p className="mx-6 mt-4 rounded-xl bg-[#e4eee7] px-4 py-3 text-sm font-semibold text-[#3d604a]">{importMessage}</p>}{reportEntries.length === 0 ? <div className="empty-panel"><BarChart3 /><strong>No work recorded for this week</strong><span>Use the timer or import an exported work week.</span></div> : <div className="table-wrap"><table><thead><tr><th>Date</th><th>Task</th><th>Client</th><th>Time</th><th>Rate</th><th>Value</th><th>Evidence</th></tr></thead><tbody>{reportEntries.map((entry) => <tr key={entry.id}><td>{dateFormatter.format(new Date(entry.startedAt))}</td><td><strong>{entry.task}</strong></td><td>{entry.client}</td><td>{formatDuration(entry.durationMinutes ?? 0)}</td><td>{moneyFormatter.format(entry.hourlyRateCents / 100)}</td><td>{moneyFormatter.format(((entry.durationMinutes ?? 0) / 60) * (entry.hourlyRateCents / 100))}</td><td><div className="flex gap-2"><button onClick={() => openEdit(entry)} className="evidence-link" aria-label={`Edit ${entry.task}`}><Pencil /></button>{entry.commitUrl && <a aria-label="Open GitHub evidence" className="evidence-link" href={entry.commitUrl} target="_blank" rel="noreferrer"><GitCommitHorizontal /></a>}{entry.screenshotUrl && <a aria-label="Open screenshot" className="evidence-link" href={entry.screenshotUrl} target="_blank" rel="noreferrer"><FileImage /></a>}</div></td></tr>)}</tbody></table></div>}</div>
+              <div className="metric-grid"><div className="metric-card dark"><span>Hours worked</span><strong>{formatDuration(reportMinutes)}</strong></div><div className="metric-card"><span>Billable value</span><strong>{moneyFormatter.format(reportValue)}</strong></div><div className="metric-card"><span>Activities</span><strong>{reportEntries.length}</strong></div></div>
+              {reportRateSummary.length > 0 && <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-3">{reportRateSummary.map((item) => <article key={`${item.name}-${item.hourlyRateCents}`} className="rounded-[18px] border border-[#ced1cc] bg-[#f5f5f2] p-5"><p className="text-sm font-bold">{item.name}</p><p className="mt-1 text-xs text-[#737b76]">{moneyFormatter.format(item.hourlyRateCents / 100)}/hr · {item.activities} {item.activities === 1 ? 'activity' : 'activities'}</p><div className="mt-4 flex items-end justify-between gap-3 border-t border-[#d9dcd7] pt-4"><div><span className="text-[10px] font-bold uppercase tracking-wider text-[#7a817d]">Time</span><strong className="block text-lg">{formatDuration(item.minutes)}</strong></div><div className="text-right"><span className="text-[10px] font-bold uppercase tracking-wider text-[#7a817d]">Charged</span><strong className="block text-lg">{moneyFormatter.format(item.total)}</strong></div></div></article>)}</div>}
+              <div className="data-panel mt-5"><div className="panel-heading"><div><p className="kicker">Work log</p><h2>Entries for this week</h2></div><div className="flex flex-wrap gap-2"><Button variant="outline" className="rounded-xl" onClick={() => importInput.current?.click()} disabled={saving}><FileUp /> Import CSV</Button><Button variant="outline" className="rounded-xl" onClick={() => exportEvidencePdf(reportEntries, reportWeekStart)} disabled={!reportEntries.length}><FileDown /> Export PDF</Button><Button variant="outline" className="rounded-xl" onClick={() => exportReport(reportEntries, reportWeekStart)}><Download /> Export CSV</Button></div></div>{importMessage && <p className="mx-6 mt-4 rounded-xl bg-[#e4eee7] px-4 py-3 text-sm font-semibold text-[#3d604a]">{importMessage}</p>}{reportEntries.length === 0 ? <div className="empty-panel"><BarChart3 /><strong>No work recorded for this week</strong><span>Use the timer or import an exported work week.</span></div> : <div className="table-wrap"><table><thead><tr><th>Date</th><th>Task</th><th>Client</th><th>Time</th><th>Rate used</th><th>Value</th><th>Evidence</th></tr></thead><tbody>{reportEntries.map((entry) => <tr key={entry.id}><td>{dateFormatter.format(new Date(entry.startedAt))}</td><td><strong>{entry.task}</strong></td><td>{entry.client}</td><td>{formatDuration(entry.durationMinutes ?? 0)}</td><td><strong>{entry.rateName}</strong><br/><span className="text-xs text-[#737b76]">{moneyFormatter.format(entry.hourlyRateCents / 100)}/hr</span></td><td>{moneyFormatter.format(((entry.durationMinutes ?? 0) / 60) * (entry.hourlyRateCents / 100))}</td><td><div className="flex gap-2"><button onClick={() => openEdit(entry)} className="evidence-link" aria-label={`Edit ${entry.task}`}><Pencil /></button>{entry.commitUrl && <a aria-label="Open GitHub evidence" className="evidence-link" href={entry.commitUrl} target="_blank" rel="noreferrer"><GitCommitHorizontal /></a>}{entry.screenshotUrl && <a aria-label="Open screenshot" className="evidence-link" href={entry.screenshotUrl} target="_blank" rel="noreferrer"><FileImage /></a>}</div></td></tr>)}</tbody></table></div>}</div>
             </section>
           )}
 
@@ -535,7 +586,8 @@ export default function Home() {
           {activeView === 'settings' && (
             <section>
               <div className="page-heading"><div><p className="kicker">Settings</p><h1>Make it yours.</h1><p>These defaults are stored on the server and available across your devices.</p></div></div>
-              <form onSubmit={saveSettings} className="settings-card mt-6"><div className="settings-section"><div><h2>Profile</h2><p>Used to personalise your workspace.</p></div><div className="settings-fields"><label className="manual-field"><span>Display name</span><Input value={settings.displayName} onChange={(event) => setSettings((current) => ({ ...current, displayName: event.target.value }))} required /></label><label className="manual-field"><span>Initials</span><Input value={settings.initials} maxLength={3} onChange={(event) => setSettings((current) => ({ ...current, initials: event.target.value.toUpperCase() }))} required /></label></div></div><div className="settings-section"><div><h2>Time & billing</h2><p>Applied when you start or manually add work.</p></div><div className="settings-fields"><label className="manual-field"><span>Default hourly rate (AUD)</span><Input type="number" min="0" value={settings.defaultRateCents / 100} onChange={(event) => setSettings((current) => ({ ...current, defaultRateCents: Number(event.target.value) * 100 }))} required /></label><label className="manual-field"><span>Currency</span><Input value="AUD — Australian Dollar" disabled /></label><label className="manual-field"><span>Timezone</span><Input value="Australia/Sydney" disabled /></label><label className="manual-field"><span>Week starts</span><Input value="Monday" disabled /></label></div></div><div className="settings-actions"><span>{settingsSaved ? 'Settings saved.' : ''}</span><Button disabled={saving} type="submit" className="h-10 rounded-xl bg-[#3d4b45] px-5 text-white">Save settings</Button></div></form>
+              <form onSubmit={saveSettings} className="settings-card mt-6"><div className="settings-section"><div><h2>Profile</h2><p>Used to personalise your workspace.</p></div><div className="settings-fields"><label className="manual-field"><span>Display name</span><Input value={settings.displayName} onChange={(event) => setSettings((current) => ({ ...current, displayName: event.target.value }))} required /></label><label className="manual-field"><span>Initials</span><Input value={settings.initials} maxLength={3} onChange={(event) => setSettings((current) => ({ ...current, initials: event.target.value.toUpperCase() }))} required /></label></div></div><div className="settings-section"><div><h2>Time & billing</h2><p>Your saved rates are selected separately for each activity.</p></div><div className="settings-fields"><label className="manual-field"><span>Currency</span><Input value="AUD — Australian Dollar" disabled /></label><label className="manual-field"><span>Timezone</span><Input value="Australia/Sydney" disabled /></label><label className="manual-field"><span>Week starts</span><Input value="Monday" disabled /></label></div></div><div className="settings-actions"><span>{settingsSaved ? 'Settings saved.' : ''}</span><Button disabled={saving} type="submit" className="h-10 rounded-xl bg-[#3d4b45] px-5 text-white">Save settings</Button></div></form>
+              <div className="settings-card mt-5"><div className="settings-section"><div><h2>Billing rates</h2><p>Create named rates such as Recruiting or Admin. The selected name and fee are saved with each activity.</p></div><div className="space-y-3">{rates.length === 0 ? <p className="text-sm text-[#737b76]">No billing rates yet. Add your first one below.</p> : rates.map((item) => <article key={item.id} className="rounded-xl border border-[#d9dcd7] bg-[#eef0ec] p-4"><div className="flex items-start justify-between gap-4"><div><strong className="text-sm">{item.name}</strong>{item.description && <p className="mt-1 text-xs text-[#737b76]">{item.description}</p>}</div><strong className="whitespace-nowrap text-sm">{moneyFormatter.format(item.hourlyRateCents / 100)}/hr</strong></div></article>)}</div></div><form onSubmit={addBillingRate} className="settings-section border-t border-[#d9dcd7]"><div><h2>Add a rate</h2><p>The description helps explain when this rate should be used.</p></div><div className="settings-fields"><label className="manual-field"><span>Rate name</span><Input value={newRateName} onChange={(event) => setNewRateName(event.target.value)} placeholder="e.g. Recruiting" required /></label><label className="manual-field"><span>Fee per hour (AUD)</span><Input type="number" min="0" step="0.01" value={newRateFee} onChange={(event) => setNewRateFee(event.target.value)} placeholder="50.00" required /></label><label className="manual-field sm:col-span-2"><span>Description</span><Input value={newRateDescription} onChange={(event) => setNewRateDescription(event.target.value)} placeholder="When this rate should be used" /></label><Button disabled={saving} type="submit" className="h-10 w-fit rounded-xl bg-[#3d4b45] px-5 text-white"><Plus /> Add rate</Button></div></form></div>
             </section>
           )}
         </div>
@@ -551,7 +603,7 @@ export default function Home() {
             <div className="grid gap-4 px-6 py-5 sm:grid-cols-2">
               <label className="manual-field sm:col-span-2"><span>Task</span><Input value={manualTask} onChange={(event) => setManualTask(event.target.value)} placeholder="What did you work on?" required /></label>
               <label className="manual-field"><span>Client</span><Input value={manualClient} onChange={(event) => setManualClient(event.target.value)} placeholder="Client name" required /></label>
-              <label className="manual-field"><span>Rate / hour (AUD)</span><Input type="number" min="0" step="1" value={manualRate} onChange={(event) => setManualRate(event.target.value)} required /></label>
+              <label className="manual-field"><span>Billing rate</span><select value={manualRateId} onChange={(event) => setManualRateId(event.target.value)} required className="h-10 rounded-md border border-[#c9ccc7] bg-white px-3 text-sm"><option value="" disabled>{rates.length ? 'Select rate' : 'Add a rate in Settings'}</option>{rates.map((item) => <option key={item.id} value={item.id}>{item.name} · {moneyFormatter.format(item.hourlyRateCents / 100)}/hr</option>)}</select></label>
               <label className="manual-field"><span>Date</span><Input type="date" max={localDateValue()} value={manualDate} onChange={(event) => setManualDate(event.target.value)} required /></label>
               <div className="grid grid-cols-2 gap-3"><label className="manual-field"><span>Started</span><Input type="time" value={manualStart} onChange={(event) => setManualStart(event.target.value)} required /></label><label className="manual-field"><span>Finished</span><Input type="time" value={manualEnd} onChange={(event) => setManualEnd(event.target.value)} required /></label></div>
               <label className="manual-field"><span>GitHub evidence</span><Input type="url" value={manualCommit} onChange={(event) => setManualCommit(event.target.value)} placeholder="https://github.com/…/commit or /pull/…" /></label>
@@ -569,7 +621,7 @@ export default function Home() {
             <div className="grid gap-4 px-6 py-5 sm:grid-cols-2">
               <label className="manual-field sm:col-span-2"><span>Task title</span><Input value={editTask} onChange={(event) => setEditTask(event.target.value)} required /></label>
               <label className="manual-field"><span>Client</span><Input value={editClient} onChange={(event) => setEditClient(event.target.value)} required /></label>
-              <label className="manual-field"><span>Rate / hour (AUD)</span><Input type="number" min="0" step="1" value={editRate} onChange={(event) => setEditRate(event.target.value)} required /></label>
+              <label className="manual-field"><span>Billing rate</span><select value={editRateId} onChange={(event) => setEditRateId(event.target.value)} required className="h-10 rounded-md border border-[#c9ccc7] bg-white px-3 text-sm"><option value="" disabled>Select rate</option>{rates.map((item) => <option key={item.id} value={item.id}>{item.name} · {moneyFormatter.format(item.hourlyRateCents / 100)}/hr</option>)}</select>{editingEntry?.billingRateId == null && <small className="text-[#8a6a5d]">This older entry uses “{editingEntry?.rateName}”. Choose a saved rate to update it.</small>}</label>
               <label className="manual-field"><span>GitHub evidence</span><Input type="url" value={editCommit} onChange={(event) => setEditCommit(event.target.value)} placeholder="https://github.com/…/commit or /pull/…" /></label>
               <label className="manual-field"><span>Screenshot link</span><Input type="url" value={editScreenshot} onChange={(event) => setEditScreenshot(event.target.value)} placeholder="https://…" /></label>
               <label className="manual-field sm:col-span-2"><span>What was completed?</span><Input value={editNotes} onChange={(event) => setEditNotes(event.target.value)} placeholder="Short summary of the outcome" /></label>

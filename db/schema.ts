@@ -7,6 +7,8 @@ export const timeEntries = sqliteTable(
     task: text('task').notNull(),
     client: text('client').notNull(),
     hourlyRateCents: integer('hourly_rate_cents').notNull().default(0),
+    rateName: text('rate_name').notNull().default('Legacy rate'),
+    billingRateId: integer('billing_rate_id'),
     startedAt: text('started_at').notNull(),
     endedAt: text('ended_at'),
     durationMinutes: integer('duration_minutes'),
@@ -21,6 +23,16 @@ export const timeEntries = sqliteTable(
     index('idx_time_entries_client_started_at').on(table.client, table.startedAt),
   ],
 );
+
+export const billingRates = sqliteTable('billing_rates', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  name: text('name').notNull(),
+  description: text('description').notNull().default(''),
+  hourlyRateCents: integer('hourly_rate_cents').notNull(),
+  createdAt: text('created_at').notNull(),
+}, (table) => [
+  index('idx_billing_rates_name').on(table.name),
+]);
 
 export const appSettings = sqliteTable('app_settings', {
   id: text('id').primaryKey(),

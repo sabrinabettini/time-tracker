@@ -102,6 +102,12 @@ function localDateValue(date = new Date()) {
   return `${value('year')}-${value('month')}-${value('day')}`;
 }
 
+function addCalendarDays(date: Date, days: number) {
+  const copy = new Date(date);
+  copy.setUTCDate(copy.getUTCDate() + days);
+  return copy;
+}
+
 function parseCsv(text: string) {
   const rows: string[][] = [];
   let row: string[] = []; let cell = ''; let quoted = false;
@@ -215,7 +221,12 @@ export default function Home() {
   }, [running]);
 
   const weekStart = getMonday();
-  const weekEntries = entries.filter((entry) => new Date(entry.startedAt) >= weekStart);
+  const weekStartKey = localDateValue(weekStart);
+  const weekEndKey = localDateValue(addCalendarDays(weekStart, 7));
+  const weekEntries = entries.filter((entry) => {
+    const entryDate = localDateValue(new Date(entry.startedAt));
+    return entryDate >= weekStartKey && entryDate < weekEndKey;
+  });
   const completed = weekEntries.filter((entry) => entry.status === 'completed');
   const totalMinutes = completed.reduce((sum, entry) => sum + (entry.durationMinutes ?? 0), 0);
   const totalValue = completed.reduce((sum, entry) => sum + ((entry.durationMinutes ?? 0) / 60) * (entry.hourlyRateCents / 100), 0);
@@ -224,16 +235,21 @@ export default function Home() {
   const dailyTotals = useMemo(() => {
     return Array.from({ length: 5 }, (_, index) => {
       const date = new Date(weekStart);
-      date.setDate(date.getDate() + index);
-      const minutes = completed.filter((entry) => new Date(entry.startedAt).toDateString() === date.toDateString()).reduce((sum, entry) => sum + (entry.durationMinutes ?? 0), 0);
+      date.setUTCDate(date.getUTCDate() + index);
+      const dateKey = localDateValue(date);
+      const minutes = completed.filter((entry) => localDateValue(new Date(entry.startedAt)) === dateKey).reduce((sum, entry) => sum + (entry.durationMinutes ?? 0), 0);
       return { label: dayFormatter.format(date), minutes };
     });
   }, [completed, weekStart]);
   const maxDaily = Math.max(480, ...dailyTotals.map((day) => day.minutes));
 
-  const reportWeekEnd = new Date(reportWeekStart);
-  reportWeekEnd.setDate(reportWeekEnd.getDate() + 7);
-  const reportEntries = entries.filter((entry) => entry.status === 'completed' && new Date(entry.startedAt) >= reportWeekStart && new Date(entry.startedAt) < reportWeekEnd);
+  const reportWeekEnd = addCalendarDays(reportWeekStart, 7);
+  const reportWeekStartKey = localDateValue(reportWeekStart);
+  const reportWeekEndKey = localDateValue(reportWeekEnd);
+  const reportEntries = entries.filter((entry) => {
+    const entryDate = localDateValue(new Date(entry.startedAt));
+    return entry.status === 'completed' && entryDate >= reportWeekStartKey && entryDate < reportWeekEndKey;
+  });
   const reportMinutes = reportEntries.reduce((sum, entry) => sum + (entry.durationMinutes ?? 0), 0);
   const reportValue = reportEntries.reduce((sum, entry) => sum + ((entry.durationMinutes ?? 0) / 60) * (entry.hourlyRateCents / 100), 0);
   const reportRateSummary = Array.from(new Map(reportEntries.map((entry) => [`${entry.rateName}|${entry.hourlyRateCents}`, { name: entry.rateName, hourlyRateCents: entry.hourlyRateCents }])).values()).map((rateItem) => {
@@ -447,7 +463,7 @@ export default function Home() {
   function moveReportWeek(direction: number) {
     setReportWeekStart((current) => {
       const next = new Date(current);
-      next.setDate(next.getDate() + direction * 7);
+      next.setUTCDate(next.getUTCDate() + direction * 7);
       return next;
     });
   }

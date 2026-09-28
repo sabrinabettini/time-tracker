@@ -80,6 +80,7 @@ const dateValueFormatter = new Intl.DateTimeFormat('en-CA', {
   day: '2-digit',
   timeZone: APP_TIME_ZONE,
 });
+const monthFormatter = new Intl.DateTimeFormat('en-AU', { month: 'long', year: 'numeric', timeZone: APP_TIME_ZONE });
 const moneyFormatter = new Intl.NumberFormat('en-AU', { style: 'currency', currency: 'AUD', maximumFractionDigits: 0 });
 
 function formatDuration(minutes: number) {
@@ -105,6 +106,17 @@ function localDateValue(date = new Date()) {
 function addCalendarDays(date: Date, days: number) {
   const copy = new Date(date);
   copy.setUTCDate(copy.getUTCDate() + days);
+  return copy;
+}
+
+function getMonthStart(date = new Date()) {
+  const [year, month] = localDateValue(date).split('-').map(Number);
+  return new Date(Date.UTC(year, month - 1, 1, 12));
+}
+
+function addCalendarMonths(date: Date, months: number) {
+  const copy = new Date(date);
+  copy.setUTCMonth(copy.getUTCMonth() + months);
   return copy;
 }
 
@@ -158,6 +170,7 @@ export default function Home() {
   const [manualNotes, setManualNotes] = useState('');
   const [activeView, setActiveView] = useState<View>('dashboard');
   const [reportWeekStart, setReportWeekStart] = useState(() => getMonday());
+  const [reportMonthStart, setReportMonthStart] = useState(() => getMonthStart());
   const [settings, setSettings] = useState<SettingsData>({ displayName: 'Sabrina', initials: 'SB', defaultRateCents: 15000, currency: 'AUD', timezone: 'Australia/Sydney', weekStartsOn: 1 });
   const [settingsSaved, setSettingsSaved] = useState(false);
   const [importMessage, setImportMessage] = useState('');
@@ -257,6 +270,15 @@ export default function Home() {
     const minutes = rateEntries.reduce((sum, entry) => sum + (entry.durationMinutes ?? 0), 0);
     return { ...rateItem, minutes, activities: rateEntries.length, total: (minutes / 60) * (rateItem.hourlyRateCents / 100) };
   }).sort((a, b) => b.total - a.total);
+  const reportMonthEnd = addCalendarMonths(reportMonthStart, 1);
+  const reportMonthStartKey = localDateValue(reportMonthStart);
+  const reportMonthEndKey = localDateValue(reportMonthEnd);
+  const reportMonthEntries = entries.filter((entry) => {
+    const entryDate = localDateValue(new Date(entry.startedAt));
+    return entry.status === 'completed' && entryDate >= reportMonthStartKey && entryDate < reportMonthEndKey;
+  });
+  const reportMonthMinutes = reportMonthEntries.reduce((sum, entry) => sum + (entry.durationMinutes ?? 0), 0);
+  const reportMonthValue = reportMonthEntries.reduce((sum, entry) => sum + ((entry.durationMinutes ?? 0) / 60) * (entry.hourlyRateCents / 100), 0);
   const clientStats = Array.from(new Set(entries.filter((entry) => entry.status === 'completed').map((entry) => entry.client))).map((clientName) => {
     const clientEntries = entries.filter((entry) => entry.status === 'completed' && entry.client === clientName);
     return {
@@ -375,28 +397,29 @@ export default function Home() {
     finally { setSaving(false); }
   }
 
-  function exportReport(records: Entry[] = completed, startDate: Date = weekStart) {
+  function exportReport(records: Entry[] = completed, startDate: Date = weekStart, fileLabel = `time-report-${localDateValue(startDate)}`) {
     const rows = [['Task', 'Client', 'Date', 'Started', 'Ended', 'Hours', 'Rate name', 'Rate AUD', 'Value AUD', 'GitHub evidence', 'Screenshot evidence', 'What was completed?', 'Started At ISO', 'Ended At ISO']];
     records.forEach((entry) => rows.push([entry.task, entry.client, dateFormatter.format(new Date(entry.startedAt)), timeFormatter.format(new Date(entry.startedAt)), entry.endedAt ? timeFormatter.format(new Date(entry.endedAt)) : '', ((entry.durationMinutes ?? 0) / 60).toFixed(2), entry.rateName, (entry.hourlyRateCents / 100).toFixed(2), (((entry.durationMinutes ?? 0) / 60) * (entry.hourlyRateCents / 100)).toFixed(2), entry.commitUrl ?? '', entry.screenshotUrl ?? '', entry.notes ?? '', entry.startedAt, entry.endedAt ?? '']));
     const csv = rows.map((row) => row.map((value) => `"${String(value).replaceAll('"', '""')}"`).join(',')).join('\n');
     const link = document.createElement('a');
     link.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
-    link.download = `time-report-${startDate.toISOString().slice(0, 10)}.csv`;
+    link.download = `${fileLabel}.csv`;
     link.click();
     URL.revokeObjectURL(link.href);
   }
 
-  function exportEvidencePdf(records: Entry[] = reportEntries, startDate: Date = reportWeekStart) {
+  function exportEvidencePdf(records: Entry[] = reportEntries, startDate: Date = reportWeekStart, endDate = reportWeekEnd, reportTitle = 'Weekly time report') {
     if (!records.length) { setError('Add or import at least one completed entry before exporting a PDF.'); return; }
     const printWindow = window.open('', '_blank');
     if (!printWindow) { setError('Your browser blocked the PDF window. Allow pop-ups and try again.'); return; }
     printWindow.opener = null;
     const document = printWindow.document;
-    document.title = `Time report ${startDate.toISOString().slice(0, 10)}`;
+    document.title = `${reportTitle} ${localDateValue(startDate)}`;
     document.head.innerHTML = '<style>@page{margin:18mm}body{color:#202522;font:12px Arial,sans-serif}h1{font-size:25px;margin:0 0 5px}h2{font-size:16px;margin:0}p{color:#626b66;margin:0 0 18px}.summary{border:1px solid #d7ddd8;margin:20px 0}.summary-overview{display:flex;gap:35px;padding:14px 16px}.summary strong{display:block;color:#202522;font-size:16px}.rate-title{border-top:1px solid #d7ddd8;background:#f1f3f1;padding:7px 16px;color:#626b66;font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase}.rate-row{display:grid;grid-template-columns:1fr 90px 90px 110px;align-items:center;gap:16px;border-top:1px solid #e1e4e1;padding:10px 16px}.rate-row:first-of-type{border-top:0}.rate-row span:not(:first-child),.rate-row strong{text-align:right}.rate-row strong{font-size:12px}.rate-name b{display:block}.rate-name small{color:#727a75}.entry{break-inside:avoid;border-top:1px solid #d7ddd8;padding:18px 0}.meta{display:flex;justify-content:space-between;gap:18px;margin-top:6px}.notes{margin-top:10px;color:#454d48}.evidence{margin-top:16px;border-left:3px solid #657a70;padding-left:11px}.evidence-title{color:#3d4b45;font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase}.evidence img{display:block;max-width:100%;max-height:130mm;border:1px solid #d7ddd8;border-radius:4px}.evidence a{color:#235b7c;display:block;line-height:1.45;overflow-wrap:anywhere}.evidence-label{color:#303a35;font-weight:700;margin-top:8px}.muted{color:#727a75;font-size:11px}@media print{.entry,.summary{page-break-inside:avoid}}</style>';
     const body = document.body;
-    const heading = document.createElement('h1'); heading.textContent = 'Weekly time report'; body.append(heading);
-    const subtitle = document.createElement('p'); subtitle.textContent = `${dateFormatter.format(startDate)} – ${dateFormatter.format(new Date(startDate.getTime() + 6 * 86400000))} · Evidence included`; body.append(subtitle);
+    const heading = document.createElement('h1'); heading.textContent = reportTitle; body.append(heading);
+    const finalDate = addCalendarDays(endDate, -1);
+    const subtitle = document.createElement('p'); subtitle.textContent = `${dateFormatter.format(startDate)} – ${dateFormatter.format(finalDate)} · Evidence included`; body.append(subtitle);
     const summary = document.createElement('div'); summary.className = 'summary';
     const overview = document.createElement('div'); overview.className = 'summary-overview';
     [['Hours worked', formatDuration(records.reduce((sum, entry) => sum + (entry.durationMinutes ?? 0), 0))], ['Billable value', moneyFormatter.format(records.reduce((sum, entry) => sum + ((entry.durationMinutes ?? 0) / 60) * (entry.hourlyRateCents / 100), 0))], ['Entries', String(records.length)]].forEach(([label, value]) => { const item = document.createElement('div'); const name = document.createElement('span'); name.textContent = label; const amount = document.createElement('strong'); amount.textContent = value; item.append(name, amount); overview.append(item); });
@@ -466,6 +489,10 @@ export default function Home() {
       next.setUTCDate(next.getUTCDate() + direction * 7);
       return next;
     });
+  }
+
+  function moveReportMonth(direction: number) {
+    setReportMonthStart((current) => addCalendarMonths(current, direction));
   }
 
   async function saveSettings(event: React.FormEvent) {
@@ -594,6 +621,12 @@ export default function Home() {
               <div className="metric-grid"><div className="metric-card dark"><span>Hours worked</span><strong>{formatDuration(reportMinutes)}</strong></div><div className="metric-card"><span>Billable value</span><strong>{moneyFormatter.format(reportValue)}</strong></div><div className="metric-card"><span>Activities</span><strong>{reportEntries.length}</strong></div></div>
               {reportRateSummary.length > 0 && <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-3">{reportRateSummary.map((item) => <article key={`${item.name}-${item.hourlyRateCents}`} className="rounded-[18px] border border-[#ced1cc] bg-[#f5f5f2] p-5"><p className="text-sm font-bold">{item.name}</p><p className="mt-1 text-xs text-[#737b76]">{moneyFormatter.format(item.hourlyRateCents / 100)}/hr · {item.activities} {item.activities === 1 ? 'activity' : 'activities'}</p><div className="mt-4 flex items-end justify-between gap-3 border-t border-[#d9dcd7] pt-4"><div><span className="text-[10px] font-bold uppercase tracking-wider text-[#7a817d]">Time</span><strong className="block text-lg">{formatDuration(item.minutes)}</strong></div><div className="text-right"><span className="text-[10px] font-bold uppercase tracking-wider text-[#7a817d]">Charged</span><strong className="block text-lg">{moneyFormatter.format(item.total)}</strong></div></div></article>)}</div>}
               <div className="data-panel mt-5"><div className="panel-heading"><div><p className="kicker">Work log</p><h2>Entries for this week</h2></div><div className="flex flex-wrap gap-2"><Button variant="outline" className="rounded-xl" onClick={() => importInput.current?.click()} disabled={saving}><FileUp /> Import CSV</Button><Button variant="outline" className="rounded-xl" onClick={() => exportEvidencePdf(reportEntries, reportWeekStart)} disabled={!reportEntries.length}><FileDown /> Export PDF</Button><Button variant="outline" className="rounded-xl" onClick={() => exportReport(reportEntries, reportWeekStart)}><Download /> Export CSV</Button></div></div>{importMessage && <p className="mx-6 mt-4 rounded-xl bg-[#e4eee7] px-4 py-3 text-sm font-semibold text-[#3d604a]">{importMessage}</p>}{reportEntries.length === 0 ? <div className="empty-panel"><BarChart3 /><strong>No work recorded for this week</strong><span>Use the timer or import an exported work week.</span></div> : <div className="table-wrap"><table><thead><tr><th>Date</th><th>Task</th><th>Client</th><th>Time</th><th>Rate used</th><th>Value</th><th>Actions</th></tr></thead><tbody>{reportEntries.map((entry) => <tr key={entry.id}><td>{dateFormatter.format(new Date(entry.startedAt))}</td><td><strong>{entry.task}</strong></td><td>{entry.client}</td><td>{formatDuration(entry.durationMinutes ?? 0)}</td><td><strong>{entry.rateName}</strong><br/><span className="text-xs text-[#737b76]">{moneyFormatter.format(entry.hourlyRateCents / 100)}/hr</span></td><td>{moneyFormatter.format(((entry.durationMinutes ?? 0) / 60) * (entry.hourlyRateCents / 100))}</td><td><div className="flex gap-2"><button onClick={() => openEdit(entry)} className="evidence-link" aria-label={`Edit ${entry.task}`} title="Edit activity"><Pencil /></button>{entry.commitUrl && <a aria-label="Open GitHub evidence" className="evidence-link" href={entry.commitUrl} target="_blank" rel="noreferrer" title="Open GitHub evidence"><GitCommitHorizontal /></a>}{entry.screenshotUrl && <a aria-label="Open screenshot" className="evidence-link" href={entry.screenshotUrl} target="_blank" rel="noreferrer" title="Open screenshot"><FileImage /></a>}<button disabled={saving} onClick={() => deleteEntry(entry)} className="evidence-link hover:!border-[#a86e5b] hover:!bg-[#eadbd5] hover:!text-[#7f4d3d]" aria-label={`Delete ${entry.task}`} title="Delete activity"><Trash2 /></button></div></td></tr>)}</tbody></table></div>}</div>
+              <section className="mt-8 rounded-[22px] border border-[#bfc7c1] bg-[#e0e5e1] p-5 md:p-6">
+                <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-start"><div><p className="kicker">Billing period</p><h2 className="mt-1 text-xl font-bold tracking-[-.03em]">Monthly export</h2><p className="mt-1 text-sm text-[#65706a]">Export a calendar month, even when it crosses weekly reports.</p></div><Button variant="outline" className="rounded-xl bg-[#f5f5f2]" onClick={() => setReportMonthStart(getMonthStart())}>This month</Button></div>
+                <div className="week-switcher mt-5 bg-[#f5f5f2]"><button onClick={() => moveReportMonth(-1)} aria-label="Previous month"><ChevronLeft /></button><div><strong>{monthFormatter.format(reportMonthStart)}</strong><span>{reportMonthEntries.length} completed {reportMonthEntries.length === 1 ? 'activity' : 'activities'}</span></div><button onClick={() => moveReportMonth(1)} disabled={reportMonthStart >= getMonthStart()} aria-label="Next month"><ChevronRight /></button></div>
+                <div className="mt-5 grid gap-3 sm:grid-cols-3"><div className="rounded-xl bg-[#3d4b45] p-4 text-white"><span className="text-xs text-white/65">Hours worked</span><strong className="mt-1 block text-xl">{formatDuration(reportMonthMinutes)}</strong></div><div className="rounded-xl border border-[#cbd0cc] bg-[#f5f5f2] p-4"><span className="text-xs text-[#737b76]">Billable value</span><strong className="mt-1 block text-xl">{moneyFormatter.format(reportMonthValue)}</strong></div><div className="rounded-xl border border-[#cbd0cc] bg-[#f5f5f2] p-4"><span className="text-xs text-[#737b76]">Activities</span><strong className="mt-1 block text-xl">{reportMonthEntries.length}</strong></div></div>
+                <div className="mt-5 flex flex-wrap gap-2"><Button onClick={() => exportEvidencePdf(reportMonthEntries, reportMonthStart, reportMonthEnd, 'Monthly time report')} disabled={!reportMonthEntries.length} className="rounded-xl bg-[#3d4b45] text-white hover:bg-[#2f3a35]"><FileDown /> Export month PDF</Button><Button variant="outline" className="rounded-xl bg-[#f5f5f2]" onClick={() => exportReport(reportMonthEntries, reportMonthStart, `time-report-month-${localDateValue(reportMonthStart).slice(0, 7)}`)} disabled={!reportMonthEntries.length}><Download /> Export month CSV</Button></div>
+              </section>
             </section>
           )}
 

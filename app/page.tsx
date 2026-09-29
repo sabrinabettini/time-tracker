@@ -71,6 +71,7 @@ type SettingsData = {
 };
 
 const APP_TIME_ZONE = 'Australia/Sydney';
+const SSR_SAFE_DATE = new Date(Date.UTC(2020, 0, 6, 12));
 const dayFormatter = new Intl.DateTimeFormat('en-AU', { weekday: 'short', timeZone: APP_TIME_ZONE });
 const dateFormatter = new Intl.DateTimeFormat('en-AU', { day: '2-digit', month: 'short', timeZone: APP_TIME_ZONE });
 const timeFormatter = new Intl.DateTimeFormat('en-AU', { hour: '2-digit', minute: '2-digit', timeZone: APP_TIME_ZONE });
@@ -162,15 +163,16 @@ export default function Home() {
   const [manualTask, setManualTask] = useState('');
   const [manualClient, setManualClient] = useState('');
   const [manualRateId, setManualRateId] = useState('');
-  const [manualDate, setManualDate] = useState(localDateValue());
+  const [currentDate, setCurrentDate] = useState(() => SSR_SAFE_DATE);
+  const [manualDate, setManualDate] = useState(() => localDateValue(SSR_SAFE_DATE));
   const [manualStart, setManualStart] = useState('09:00');
   const [manualEnd, setManualEnd] = useState('10:00');
   const [manualCommit, setManualCommit] = useState('');
   const [manualScreenshot, setManualScreenshot] = useState('');
   const [manualNotes, setManualNotes] = useState('');
   const [activeView, setActiveView] = useState<View>('dashboard');
-  const [reportWeekStart, setReportWeekStart] = useState(() => getMonday());
-  const [reportMonthStart, setReportMonthStart] = useState(() => getMonthStart());
+  const [reportWeekStart, setReportWeekStart] = useState(() => getMonday(SSR_SAFE_DATE));
+  const [reportMonthStart, setReportMonthStart] = useState(() => getMonthStart(SSR_SAFE_DATE));
   const [settings, setSettings] = useState<SettingsData>({ displayName: 'Sabrina', initials: 'SB', defaultRateCents: 15000, currency: 'AUD', timezone: 'Australia/Sydney', weekStartsOn: 1 });
   const [settingsSaved, setSettingsSaved] = useState(false);
   const [importMessage, setImportMessage] = useState('');
@@ -224,7 +226,12 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    setNow(Date.now());
+    const today = new Date();
+    setNow(today.getTime());
+    setCurrentDate(today);
+    setManualDate(localDateValue(today));
+    setReportWeekStart(getMonday(today));
+    setReportMonthStart(getMonthStart(today));
   }, []);
 
   useEffect(() => {
@@ -233,7 +240,7 @@ export default function Home() {
     return () => window.clearInterval(interval);
   }, [running]);
 
-  const weekStart = getMonday();
+  const weekStart = getMonday(currentDate);
   const weekStartKey = localDateValue(weekStart);
   const weekEndKey = localDateValue(addCalendarDays(weekStart, 7));
   const weekEntries = entries.filter((entry) => {
@@ -560,7 +567,7 @@ export default function Home() {
           {error && <div role="alert" className="mb-5 rounded-xl border border-[#b98676] bg-[#eadbd5] px-4 py-3 text-sm text-[#743f31]">{error}</div>}
           {activeView === 'dashboard' && <>
           <div className="mb-7 flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
-            <div><p className="kicker">Today · {dateFormatter.format(new Date())}</p><h1 className="mt-1 text-3xl font-bold tracking-[-.05em] md:text-[2.6rem]">Track the work. Prove the value.</h1></div>
+            <div><p className="kicker">Today · {dateFormatter.format(currentDate)}</p><h1 className="mt-1 text-3xl font-bold tracking-[-.05em] md:text-[2.6rem]">Track the work. Prove the value.</h1></div>
             <div className="flex flex-wrap gap-2"><Button variant="outline" className="h-10 rounded-xl border-[#bec3bd] bg-[#f6f6f3] px-4" onClick={() => setManualOpen(true)}><Plus /> Add past work</Button><Button variant="outline" className="h-10 rounded-xl border-[#bec3bd] bg-[#f6f6f3] px-4" onClick={() => importInput.current?.click()} disabled={saving}><FileUp /> Import week</Button><Button variant="outline" className="h-10 rounded-xl border-[#bec3bd] bg-[#f6f6f3] px-4" onClick={() => exportReport()}><Download /> Export week</Button></div>
           </div>
 
@@ -617,13 +624,13 @@ export default function Home() {
           {activeView === 'report' && (
             <section>
               <div className="page-heading"><div><p className="kicker">Weekly report</p><h1>Time, value and evidence.</h1><p>Review any week and export a client-ready work log.</p></div><Button onClick={() => { const current = getMonday(); setReportWeekStart(current); }} variant="outline" className="h-10 rounded-xl bg-[#f5f5f2]">This week</Button></div>
-              <div className="week-switcher"><button onClick={() => moveReportWeek(-1)} aria-label="Previous week"><ChevronLeft /></button><div><strong>{dateFormatter.format(reportWeekStart)} – {dateFormatter.format(new Date(reportWeekEnd.getTime() - 86400000))}</strong><span>{reportEntries.length} completed {reportEntries.length === 1 ? 'entry' : 'entries'}</span></div><button onClick={() => moveReportWeek(1)} disabled={reportWeekStart >= getMonday()} aria-label="Next week"><ChevronRight /></button></div>
+              <div className="week-switcher"><button onClick={() => moveReportWeek(-1)} aria-label="Previous week"><ChevronLeft /></button><div><strong>{dateFormatter.format(reportWeekStart)} – {dateFormatter.format(new Date(reportWeekEnd.getTime() - 86400000))}</strong><span>{reportEntries.length} completed {reportEntries.length === 1 ? 'entry' : 'entries'}</span></div><button onClick={() => moveReportWeek(1)} disabled={reportWeekStart >= getMonday(currentDate)} aria-label="Next week"><ChevronRight /></button></div>
               <div className="metric-grid"><div className="metric-card dark"><span>Hours worked</span><strong>{formatDuration(reportMinutes)}</strong></div><div className="metric-card"><span>Billable value</span><strong>{moneyFormatter.format(reportValue)}</strong></div><div className="metric-card"><span>Activities</span><strong>{reportEntries.length}</strong></div></div>
               {reportRateSummary.length > 0 && <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-3">{reportRateSummary.map((item) => <article key={`${item.name}-${item.hourlyRateCents}`} className="rounded-[18px] border border-[#ced1cc] bg-[#f5f5f2] p-5"><p className="text-sm font-bold">{item.name}</p><p className="mt-1 text-xs text-[#737b76]">{moneyFormatter.format(item.hourlyRateCents / 100)}/hr · {item.activities} {item.activities === 1 ? 'activity' : 'activities'}</p><div className="mt-4 flex items-end justify-between gap-3 border-t border-[#d9dcd7] pt-4"><div><span className="text-[10px] font-bold uppercase tracking-wider text-[#7a817d]">Time</span><strong className="block text-lg">{formatDuration(item.minutes)}</strong></div><div className="text-right"><span className="text-[10px] font-bold uppercase tracking-wider text-[#7a817d]">Charged</span><strong className="block text-lg">{moneyFormatter.format(item.total)}</strong></div></div></article>)}</div>}
               <div className="data-panel mt-5"><div className="panel-heading"><div><p className="kicker">Work log</p><h2>Entries for this week</h2></div><div className="flex flex-wrap gap-2"><Button variant="outline" className="rounded-xl" onClick={() => importInput.current?.click()} disabled={saving}><FileUp /> Import CSV</Button><Button variant="outline" className="rounded-xl" onClick={() => exportEvidencePdf(reportEntries, reportWeekStart)} disabled={!reportEntries.length}><FileDown /> Export PDF</Button><Button variant="outline" className="rounded-xl" onClick={() => exportReport(reportEntries, reportWeekStart)}><Download /> Export CSV</Button></div></div>{importMessage && <p className="mx-6 mt-4 rounded-xl bg-[#e4eee7] px-4 py-3 text-sm font-semibold text-[#3d604a]">{importMessage}</p>}{reportEntries.length === 0 ? <div className="empty-panel"><BarChart3 /><strong>No work recorded for this week</strong><span>Use the timer or import an exported work week.</span></div> : <div className="table-wrap"><table><thead><tr><th>Date</th><th>Task</th><th>Client</th><th>Time</th><th>Rate used</th><th>Value</th><th>Actions</th></tr></thead><tbody>{reportEntries.map((entry) => <tr key={entry.id}><td>{dateFormatter.format(new Date(entry.startedAt))}</td><td><strong>{entry.task}</strong></td><td>{entry.client}</td><td>{formatDuration(entry.durationMinutes ?? 0)}</td><td><strong>{entry.rateName}</strong><br/><span className="text-xs text-[#737b76]">{moneyFormatter.format(entry.hourlyRateCents / 100)}/hr</span></td><td>{moneyFormatter.format(((entry.durationMinutes ?? 0) / 60) * (entry.hourlyRateCents / 100))}</td><td><div className="flex gap-2"><button onClick={() => openEdit(entry)} className="evidence-link" aria-label={`Edit ${entry.task}`} title="Edit activity"><Pencil /></button>{entry.commitUrl && <a aria-label="Open GitHub evidence" className="evidence-link" href={entry.commitUrl} target="_blank" rel="noreferrer" title="Open GitHub evidence"><GitCommitHorizontal /></a>}{entry.screenshotUrl && <a aria-label="Open screenshot" className="evidence-link" href={entry.screenshotUrl} target="_blank" rel="noreferrer" title="Open screenshot"><FileImage /></a>}<button disabled={saving} onClick={() => deleteEntry(entry)} className="evidence-link hover:!border-[#a86e5b] hover:!bg-[#eadbd5] hover:!text-[#7f4d3d]" aria-label={`Delete ${entry.task}`} title="Delete activity"><Trash2 /></button></div></td></tr>)}</tbody></table></div>}</div>
               <section className="mt-8 rounded-[22px] border border-[#bfc7c1] bg-[#e0e5e1] p-5 md:p-6">
                 <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-start"><div><p className="kicker">Billing period</p><h2 className="mt-1 text-xl font-bold tracking-[-.03em]">Monthly export</h2><p className="mt-1 text-sm text-[#65706a]">Export a calendar month, even when it crosses weekly reports.</p></div><Button variant="outline" className="rounded-xl bg-[#f5f5f2]" onClick={() => setReportMonthStart(getMonthStart())}>This month</Button></div>
-                <div className="week-switcher mt-5 bg-[#f5f5f2]"><button onClick={() => moveReportMonth(-1)} aria-label="Previous month"><ChevronLeft /></button><div><strong>{monthFormatter.format(reportMonthStart)}</strong><span>{reportMonthEntries.length} completed {reportMonthEntries.length === 1 ? 'activity' : 'activities'}</span></div><button onClick={() => moveReportMonth(1)} disabled={reportMonthStart >= getMonthStart()} aria-label="Next month"><ChevronRight /></button></div>
+                <div className="week-switcher mt-5 bg-[#f5f5f2]"><button onClick={() => moveReportMonth(-1)} aria-label="Previous month"><ChevronLeft /></button><div><strong>{monthFormatter.format(reportMonthStart)}</strong><span>{reportMonthEntries.length} completed {reportMonthEntries.length === 1 ? 'activity' : 'activities'}</span></div><button onClick={() => moveReportMonth(1)} disabled={reportMonthStart >= getMonthStart(currentDate)} aria-label="Next month"><ChevronRight /></button></div>
                 <div className="mt-5 grid gap-3 sm:grid-cols-3"><div className="rounded-xl bg-[#3d4b45] p-4 text-white"><span className="text-xs text-white/65">Hours worked</span><strong className="mt-1 block text-xl">{formatDuration(reportMonthMinutes)}</strong></div><div className="rounded-xl border border-[#cbd0cc] bg-[#f5f5f2] p-4"><span className="text-xs text-[#737b76]">Billable value</span><strong className="mt-1 block text-xl">{moneyFormatter.format(reportMonthValue)}</strong></div><div className="rounded-xl border border-[#cbd0cc] bg-[#f5f5f2] p-4"><span className="text-xs text-[#737b76]">Activities</span><strong className="mt-1 block text-xl">{reportMonthEntries.length}</strong></div></div>
                 <div className="mt-5 flex flex-wrap gap-2"><Button onClick={() => exportEvidencePdf(reportMonthEntries, reportMonthStart, reportMonthEnd, 'Monthly time report')} disabled={!reportMonthEntries.length} className="rounded-xl bg-[#3d4b45] text-white hover:bg-[#2f3a35]"><FileDown /> Export month PDF</Button><Button variant="outline" className="rounded-xl bg-[#f5f5f2]" onClick={() => exportReport(reportMonthEntries, reportMonthStart, `time-report-month-${localDateValue(reportMonthStart).slice(0, 7)}`)} disabled={!reportMonthEntries.length}><Download /> Export month CSV</Button></div>
               </section>
@@ -658,7 +665,7 @@ export default function Home() {
               <label className="manual-field sm:col-span-2"><span>Task</span><Input value={manualTask} onChange={(event) => setManualTask(event.target.value)} placeholder="What did you work on?" required /></label>
               <label className="manual-field"><span>Client</span><Input value={manualClient} onChange={(event) => setManualClient(event.target.value)} placeholder="Client name" required /></label>
               <label className="manual-field"><span>Billing rate</span><select value={manualRateId} onChange={(event) => setManualRateId(event.target.value)} required className="h-10 rounded-md border border-[#c9ccc7] bg-white px-3 text-sm"><option value="" disabled>{rates.length ? 'Select rate' : 'Add a rate in Settings'}</option>{rates.map((item) => <option key={item.id} value={item.id}>{item.name} · {moneyFormatter.format(item.hourlyRateCents / 100)}/hr</option>)}</select></label>
-              <label className="manual-field"><span>Date</span><Input type="date" max={localDateValue()} value={manualDate} onChange={(event) => setManualDate(event.target.value)} required /></label>
+              <label className="manual-field"><span>Date</span><Input type="date" max={localDateValue(currentDate)} value={manualDate} onChange={(event) => setManualDate(event.target.value)} required /></label>
               <div className="grid grid-cols-2 gap-3"><label className="manual-field"><span>Started</span><Input type="time" value={manualStart} onChange={(event) => setManualStart(event.target.value)} required /></label><label className="manual-field"><span>Finished</span><Input type="time" value={manualEnd} onChange={(event) => setManualEnd(event.target.value)} required /></label></div>
               <label className="manual-field"><span>GitHub evidence</span><Input type="url" value={manualCommit} onChange={(event) => setManualCommit(event.target.value)} placeholder="https://github.com/…/commit or /pull/…" /></label>
               <label className="manual-field"><span>Screenshot link</span><Input type="url" value={manualScreenshot} onChange={(event) => setManualScreenshot(event.target.value)} placeholder="https://…" /></label>
